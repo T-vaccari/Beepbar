@@ -65,6 +65,8 @@ public actor ManualSyncRun {
     }
 
     private func execute(items: [PreparedSyncItem], token: String, progress: @escaping @Sendable (SyncProgress) async -> Void) async throws -> SyncProgress {
+        let trace = PerformanceTrace.shared.begin("sync.downloadBatch", category: .sync)
+        defer { PerformanceTrace.shared.end("sync.downloadBatch", category: .sync, state: trace) }
         var completed = 0
         var installed = 0
         var preservedLocal = 0

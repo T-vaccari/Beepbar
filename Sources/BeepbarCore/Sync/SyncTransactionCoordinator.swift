@@ -15,6 +15,8 @@ public actor SyncTransactionCoordinator {
     }
 
     public func install(rootID: UUID, remoteID: String, destination: RelativePath, expectedLocal: LocalState, remote: RemoteState, artifact: StagedArtifact) async throws -> TransactionOutcome {
+        let trace = PerformanceTrace.shared.begin("database.installTransaction", category: .database)
+        defer { PerformanceTrace.shared.end("database.installTransaction", category: .database, state: trace) }
         guard artifact.sha256 == remote.sha256 else { throw FileStoreError.invalidStage }
         let operation = PendingOperation(rootID: rootID, remoteID: remoteID, destination: destination, stagePath: artifact.stagePath, expectedLocal: expectedLocal, remoteSHA256: remote.sha256, remoteRevision: remote.revision)
         try await database.beginOperation(operation)

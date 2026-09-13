@@ -131,6 +131,8 @@ enum AccountState: Equatable {
         let rootID = self.rootID
         let operationGate = self.operationGate
         Task { [weak self] in
+            let trace = PerformanceTrace.shared.begin("bootstrap.total", category: .bootstrap)
+            defer { PerformanceTrace.shared.end("bootstrap.total", category: .bootstrap, state: trace) }
             do {
                 let result = try await bootstrap.prepare(databaseDirectory: Self.databaseDirectory(), rootURL: rootURL, rootID: rootID, gate: operationGate)
                 guard let self else { return }
@@ -304,7 +306,7 @@ enum AccountState: Equatable {
                 guard let self else { return }
                 let token = try await self.credentialService.load()
                 let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient)
-                self.beginTransfer(operationID, automatic: false)
+                await self.beginTransfer(operationID, automatic: false)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .manual) { [weak self] progress in
                     await self?.progressStore.publish(progress)
                 }
@@ -592,13 +594,21 @@ enum AccountState: Equatable {
             interval: automaticSyncInterval,
             connected: accountState == .connected,
             rootConfigured: rootURL != nil,
-            enabledCourseCount: enabledCourseIDs.count
+            enabledCourseCount: enabledCourseIDs.count,
+            recoveryBlocked: recoveryBlocked
         )
         guard configuration != scheduledConfiguration else { return }
         backgroundScheduler?.invalidate()
         backgroundScheduler = nil
         scheduledConfiguration = configuration
-        guard configuration.enabled, configuration.connected, configuration.rootConfigured, configuration.enabledCourseCount > 0 else { return }
+        let policy = BackgroundScheduleInput(
+            automaticSyncEnabled: configuration.enabled,
+            hasCredential: configuration.connected,
+            hasRoot: configuration.rootConfigured,
+            enabledCourseCount: configuration.enabledCourseCount,
+            recoveryBlocked: recoveryBlocked
+        )
+        guard BackgroundSchedulePolicy.shouldSchedule(policy) else { return }
         let scheduler = NSBackgroundActivityScheduler(identifier: "io.github.tvaccari.beepbar.auto-sync")
         scheduler.repeats = true
         scheduler.interval = TimeInterval(automaticSyncInterval)
@@ -606,6 +616,8 @@ enum AccountState: Equatable {
         scheduler.qualityOfService = .utility
         scheduler.schedule { [weak self] completion in
             Task { @MainActor [weak self] in
+                let trace = PerformanceTrace.shared.begin("scheduler.callback", category: .scheduler)
+                defer { PerformanceTrace.shared.end("scheduler.callback", category: .scheduler, state: trace) }
                 let outcome = await self?.runAutomaticSync() ?? .finished
                 completion(outcome.schedulerResult)
             }
@@ -614,8 +626,8 @@ enum AccountState: Equatable {
     }
 
     private func runAutomaticSync() async -> AutomaticSyncOutcome {
-        guard !ProcessInfo.processInfo.isLowPowerModeEnabled else { return .deferred }
-        guard activeOperationID == nil else { return .deferred }
+        guard !ProcessInfo.processInfo.isLowPowerModeEnabled else { return .finished }
+        guard activeOperationID == nil else { return .finished }
         guard let rootURL, let rootID, let database, accountState == .connected, !recoveryBlocked else { return .finished }
         let operationID = UUID()
         activeOperationID = operationID
@@ -636,7 +648,7 @@ enum AccountState: Equatable {
                 guard let self else { return }
                 let token = try await self.credentialService.load()
                 let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient)
-                self.beginTransfer(operationID, automatic: true)
+                await self.beginTransfer(operationID, automatic: true)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .automatic) { [weak self] progress in
                     await self?.progressStore.publish(progress)
                 }
@@ -656,9 +668,9 @@ enum AccountState: Equatable {
         return Task.isCancelled ? .cancelled : automaticOutcome
     }
 
-    private func beginTransfer(_ operationID: UUID, automatic: Bool) {
+    private func beginTransfer(_ operationID: UUID, automatic: Bool) async {
         guard activeOperationID == operationID else { return }
-        progressStore.reset(automatic: automatic)
+        await progressStore.reset(automatic: automatic)
         setSyncState(.syncing)
     }
 
@@ -709,38 +721,37 @@ private struct BackgroundScheduleConfiguration: Equatable {
     let connected: Bool
     let rootConfigured: Bool
     let enabledCourseCount: Int
+    let recoveryBlocked: Bool
 }
 
 @MainActor final class SyncProgressStore: ObservableObject {
     @Published private(set) var progress = SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0)
-    private var relay = SyncProgressRelay(interval: .milliseconds(200))
+    private let relay = SyncProgressRelay()
 
-    func reset(automatic: Bool) {
-        relay = SyncProgressRelay(interval: automatic ? .seconds(1) : .milliseconds(200))
+    func reset(automatic: Bool) async {
+        await relay.reset(interval: automatic ? .seconds(1) : .milliseconds(200))
         progress = SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0)
     }
-    func publish(_ value: SyncProgress) async {
+    nonisolated func publish(_ value: SyncProgress) async {
         guard let update = await relay.next(value) else { return }
+        await receive(update)
+    }
+
+    private func receive(_ update: SyncProgress) {
         progress = update
     }
 }
 
 private actor SyncProgressRelay {
     private let clock = ContinuousClock()
-    private let interval: Duration
-    private var lastPublication: ContinuousClock.Instant?
-    private var lastCompleted = 0
+    private var throttle = SyncProgressThrottle(minimumInterval: .milliseconds(200))
 
-    init(interval: Duration) { self.interval = interval }
+    func reset(interval: Duration) {
+        throttle = SyncProgressThrottle(minimumInterval: interval)
+    }
 
     func next(_ progress: SyncProgress) -> SyncProgress? {
-        guard progress.completed >= lastCompleted else { return nil }
-        let now = clock.now
-        let requiredInterval: Duration = progress.total > 0 && progress.completed == progress.total ? .zero : interval
-        guard lastPublication == nil || lastPublication!.duration(to: now) >= requiredInterval else { return nil }
-        lastPublication = now
-        lastCompleted = progress.completed
-        return progress
+        throttle.accept(progress, now: clock.now)
     }
 }
 
@@ -756,6 +767,8 @@ private actor BootstrapService {
     }
 
     func prepare(databaseDirectory: URL, rootURL: URL?, rootID: UUID?, gate: RootOperationGate) async throws -> Result {
+        let trace = PerformanceTrace.shared.begin("bootstrap.databaseRecovery", category: .bootstrap)
+        defer { PerformanceTrace.shared.end("bootstrap.databaseRecovery", category: .bootstrap, state: trace) }
         try FileManager.default.createDirectory(at: databaseDirectory, withIntermediateDirectories: true)
         let database = try SyncDatabase(url: databaseDirectory.appendingPathComponent("sync.sqlite"))
         let hasStoredCredential = KeychainTokenStore.hasStoredCredential()

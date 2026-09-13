@@ -1,5 +1,7 @@
 import AppKit
+import BeepbarCore
 import SwiftUI
+import os
 
 @main
 struct BeepbarApp: App {
@@ -45,8 +47,12 @@ private struct MenuBarContent: View {
 @MainActor private final class ConfigurationWindowController: NSObject, NSWindowDelegate {
     static let shared = ConfigurationWindowController()
     private var window: NSWindow?
+    private var appearanceTrace: OSSignpostIntervalState?
 
     func show(_ authentication: WeBeepAuthenticationController) {
+        if window?.isKeyWindow != true {
+            appearanceTrace = PerformanceTrace.shared.begin("ui.configurationWindow", category: .ui)
+        }
         if let window {
             window.makeKeyAndOrderFront(nil)
         } else {
@@ -68,6 +74,12 @@ private struct MenuBarContent: View {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.orderOut(nil)
         return false
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let appearanceTrace else { return }
+        PerformanceTrace.shared.end("ui.configurationWindow", category: .ui, state: appearanceTrace)
+        self.appearanceTrace = nil
     }
 }
 

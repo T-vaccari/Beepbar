@@ -37,6 +37,8 @@ public actor SyncCoordinator {
     }
 
     public func synchronize(targets: [SyncTarget], token: String, mode: SyncCoordinatorMode, progress: @escaping @Sendable (SyncProgress) async -> Void) async throws -> SyncProgress {
+        let trace = PerformanceTrace.shared.begin("sync.run", category: .sync)
+        defer { PerformanceTrace.shared.end("sync.run", category: .sync, state: trace) }
         let runID = UUID()
         return try await gate.withLease(.syncing(runID)) {
             try await self.synchronizeWithinLease(targets: targets, token: token, mode: mode, progress: progress)
@@ -47,9 +49,24 @@ public actor SyncCoordinator {
         try Task.checkCancellation()
         guard !targets.isEmpty else { return SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0) }
         try await ensureManagedDirectories(targets)
-        let baselines = try await database.baselines(rootID: rootID)
-        let items = try await prepareItems(targets: targets, token: token, baselines: baselines, concurrency: mode.metadataConcurrency)
-        let work = try await itemsRequiringReconciliation(items, baselines: baselines)
+        let baselines: [String: Baseline]
+        do {
+            let trace = PerformanceTrace.shared.begin("sync.baselines", category: .database)
+            defer { PerformanceTrace.shared.end("sync.baselines", category: .database, state: trace) }
+            baselines = try await database.baselines(rootID: rootID)
+        }
+        let items: [PreparedSyncItem]
+        do {
+            let trace = PerformanceTrace.shared.begin("sync.metadata", category: .sync)
+            defer { PerformanceTrace.shared.end("sync.metadata", category: .sync, state: trace) }
+            items = try await prepareItems(targets: targets, token: token, baselines: baselines, concurrency: mode.metadataConcurrency)
+        }
+        let work: [PreparedSyncItem]
+        do {
+            let trace = PerformanceTrace.shared.begin("sync.planning", category: .sync)
+            defer { PerformanceTrace.shared.end("sync.planning", category: .sync, state: trace) }
+            work = try await itemsRequiringReconciliation(items, baselines: baselines)
+        }
         guard !work.isEmpty else { return SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0) }
         let runner = ManualSyncRun(rootID: rootID, database: database, fileStore: fileStore, gate: gate, maximumConcurrentDownloads: mode.downloadConcurrency, allowsExpensiveNetworkAccess: mode.allowsExpensiveNetworkAccess, serverPolicy: apiClient.policy)
         return try await runner.startWithinLease(items: work, token: token, progress: progress)

@@ -145,6 +145,8 @@ public actor FileStore {
     }
 
     public func importDownloadedFile(at source: URL, expectedSize: Int64, maximumSize: Int64) throws -> StagedArtifact {
+        let trace = PerformanceTrace.shared.begin("filesystem.import", category: .filesystem)
+        defer { PerformanceTrace.shared.end("filesystem.import", category: .filesystem, state: trace) }
         guard expectedSize >= 0, expectedSize <= maximumSize else { throw FileStoreError.tooLarge }
         let sourceFD = open(source.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
         guard sourceFD >= 0 else { throw fileStoreError() }
@@ -200,6 +202,8 @@ public actor FileStore {
     }
 
     public func install(_ artifact: StagedArtifact, at path: RelativePath, expectedLocal: LocalState) throws -> InstallResult {
+        let trace = PerformanceTrace.shared.begin("filesystem.install", category: .filesystem)
+        defer { PerformanceTrace.shared.end("filesystem.install", category: .filesystem, state: trace) }
         let staging = try directoryFD(for: [".beepbar", "staging"], create: false)
         defer { close(staging) }
         let verified = StageHandle(name: artifact.name, identity: artifact.identity, relativePath: try RelativePath(internal: ".beepbar/staging/\(artifact.name)"))

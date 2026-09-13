@@ -3,5 +3,8 @@
 .swiftpm/
 build/
 DerivedData/
+PerformanceReports/
+*.trace
+*.tracev3
 xcuserdata/
 *.xcuserstate
