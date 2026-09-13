@@ -1,0 +1,351 @@
+import Foundation
+
+public struct WeBeepSiteInfo: Sendable, Equatable {
+    public let userID: Int
+    public let siteURL: URL
+    public let availableFunctions: Set<String>
+}
+
+public struct RemoteCourseSummary: Sendable, Equatable, Identifiable {
+    public let id: Int64
+    public let shortName: String
+    public let displayName: String
+    public let isVisible: Bool?
+    public let startDate: Date?
+    public let endDate: Date?
+}
+
+public struct RemoteCourseContents: Sendable, Equatable {
+    public let sections: [RemoteContentSection]
+    public let issueCount: Int
+}
+
+public struct RemoteContentSection: Sendable, Equatable, Identifiable {
+    public let id: Int64
+    public let name: String
+    public let modules: [RemoteContentModule]
+}
+
+public struct RemoteContentModule: Sendable, Equatable, Identifiable {
+    public let id: Int64
+    public let name: String
+    public let files: [RemoteFileCandidate]
+}
+
+public struct RemoteFileCandidate: Sendable, Equatable, Identifiable {
+    public let id: String
+    public let courseID: Int64
+    public let sectionID: Int64
+    public let moduleID: Int64
+    public let sectionName: String
+    public let moduleName: String
+    public let moduleType: String
+    public let isSingleFileResource: Bool
+    public let filename: String
+    public let remoteFilePath: String
+    public let canonicalPluginPath: String
+    public let downloadURL: URL?
+    public let size: Int64
+    public let modifiedAt: Date?
+    public let observedRevision: String
+    public var isSupported: Bool
+    public var ineligibilityReason: String?
+
+    public init(id: String, courseID: Int64, sectionID: Int64, moduleID: Int64, sectionName: String, moduleName: String, moduleType: String = "unknown", isSingleFileResource: Bool = false, filename: String, remoteFilePath: String, canonicalPluginPath: String, downloadURL: URL?, size: Int64, modifiedAt: Date?, observedRevision: String, isSupported: Bool, ineligibilityReason: String? = nil) {
+        self.id = id
+        self.courseID = courseID
+        self.sectionID = sectionID
+        self.moduleID = moduleID
+        self.sectionName = sectionName
+        self.moduleName = moduleName
+        self.moduleType = moduleType
+        self.isSingleFileResource = isSingleFileResource
+        self.filename = filename
+        self.remoteFilePath = remoteFilePath
+        self.canonicalPluginPath = canonicalPluginPath
+        self.downloadURL = downloadURL
+        self.size = size
+        self.modifiedAt = modifiedAt
+        self.observedRevision = observedRevision
+        self.isSupported = isSupported
+        self.ineligibilityReason = ineligibilityReason
+    }
+}
+
+public enum WeBeepAPIError: Error, Sendable, Equatable {
+    case invalidToken
+    case invalidResponse
+    case unexpectedRedirect
+    case responseTooLarge
+    case malformedPayload
+    case unexpectedSite
+    case missingRequiredFunction
+    case transport(Int)
+}
+
+public struct WeBeepServerPolicy: Sendable, Equatable {
+    public let endpoint: URL
+    public let siteURL: URL
+    public let scheme: String
+    public let host: String
+    public let port: Int?
+
+    public static let production = WeBeepServerPolicy(
+        endpoint: URL(string: "https://webeep.polimi.it/webservice/rest/server.php")!,
+        siteURL: URL(string: "https://webeep.polimi.it")!,
+        scheme: "https", host: "webeep.polimi.it", port: 443
+    )
+
+    public init(endpoint: URL, siteURL: URL, scheme: String, host: String, port: Int?) {
+        self.endpoint = endpoint
+        self.siteURL = siteURL
+        self.scheme = scheme
+        self.host = host.lowercased()
+        self.port = port
+    }
+
+    public func acceptsPluginURL(_ url: URL) -> Bool {
+        let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath
+        let effectivePort = url.port ?? (url.scheme == "https" ? 443 : url.scheme == "http" ? 80 : nil)
+        let expectedPort = port ?? (scheme == "https" ? 443 : scheme == "http" ? 80 : nil)
+        return url.scheme == scheme && url.host?.lowercased() == host && url.user == nil && url.password == nil && effectivePort == expectedPort && url.fragment == nil &&
+            (path?.hasPrefix("/webservice/pluginfile.php/") == true || path?.hasPrefix("/pluginfile.php/") == true)
+    }
+}
+
+public final class WeBeepAPIClient: @unchecked Sendable {
+    public static let endpoint = WeBeepServerPolicy.production.endpoint
+    private let session: URLSession
+    public let policy: WeBeepServerPolicy
+
+    public init() {
+        self.session = Self.makeSession()
+        self.policy = .production
+    }
+
+    public init(session: URLSession) {
+        self.session = session
+        self.policy = .production
+    }
+
+    public init(policy: WeBeepServerPolicy, session: URLSession? = nil) {
+        self.policy = policy
+        self.session = session ?? Self.makeSession()
+    }
+
+    public func validateToken(_ token: String) async throws -> WeBeepSiteInfo {
+        let data = try await request(.siteInfo, token: token, fields: [:], limit: 1_048_576)
+        let decoded: SiteInfoResponse
+        do { decoded = try JSONDecoder().decode(SiteInfoResponse.self, from: data) }
+        catch { throw WeBeepAPIError.malformedPayload }
+        if decoded.errorcode == "invalidtoken" { throw WeBeepAPIError.invalidToken }
+        if decoded.exception != nil || decoded.errorcode != nil { throw WeBeepAPIError.malformedPayload }
+        guard let siteURL = URL(string: decoded.siteurl ?? ""), siteURL == policy.siteURL else {
+            throw WeBeepAPIError.unexpectedSite
+        }
+        let functions = Set(decoded.functions?.map(\.name) ?? [])
+        if decoded.functions != nil,
+           (!functions.contains("core_enrol_get_users_courses") || !functions.contains("core_course_get_contents")) {
+            throw WeBeepAPIError.missingRequiredFunction
+        }
+        guard let userID = decoded.userid else { throw WeBeepAPIError.malformedPayload }
+        return WeBeepSiteInfo(userID: userID, siteURL: siteURL, availableFunctions: functions)
+    }
+
+    public func fetchCourses(userID: Int, token: String) async throws -> [RemoteCourseSummary] {
+        guard userID > 0 else { throw WeBeepAPIError.malformedPayload }
+        let data = try await request(.courses, token: token, fields: ["userid": String(userID)], limit: 2_097_152)
+        if let error = try? JSONDecoder().decode(MoodleErrorResponse.self, from: data), error.exception != nil || error.errorcode != nil {
+            throw error.errorcode == "invalidtoken" ? WeBeepAPIError.invalidToken : WeBeepAPIError.malformedPayload
+        }
+        let decoded: [CourseResponse]
+        do { decoded = try JSONDecoder().decode([CourseResponse].self, from: data) }
+        catch { throw WeBeepAPIError.malformedPayload }
+        guard decoded.count <= 2_000 else { throw WeBeepAPIError.responseTooLarge }
+        var identifiers = Set<Int64>()
+        return try decoded.map { course in
+            guard course.id > 0, identifiers.insert(course.id).inserted,
+                  let name = [course.displayname, course.fullname, course.shortname].compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) }).first(where: { !$0.isEmpty && $0.utf8.count <= 512 }),
+                  let shortName = course.shortname?.trimmingCharacters(in: .whitespacesAndNewlines), !shortName.isEmpty, shortName.utf8.count <= 512 else {
+                throw WeBeepAPIError.malformedPayload
+            }
+            return RemoteCourseSummary(id: course.id, shortName: shortName, displayName: name, isVisible: course.visible.map { $0 != 0 }, startDate: course.startdate.map(Date.init(timeIntervalSince1970:)), endDate: course.enddate.map(Date.init(timeIntervalSince1970:)))
+        }
+    }
+
+    public func fetchContents(courseID: Int64, token: String) async throws -> RemoteCourseContents {
+        guard courseID > 0 else { throw WeBeepAPIError.malformedPayload }
+        let data = try await request(.contents, token: token, fields: ["courseid": String(courseID)], limit: 4_194_304)
+        if let error = try? JSONDecoder().decode(MoodleErrorResponse.self, from: data), error.exception != nil || error.errorcode != nil {
+            throw error.errorcode == "invalidtoken" ? WeBeepAPIError.invalidToken : WeBeepAPIError.malformedPayload
+        }
+        let sections: [SectionResponse]
+        do { sections = try JSONDecoder().decode([SectionResponse].self, from: data) }
+        catch { throw WeBeepAPIError.malformedPayload }
+        guard sections.count <= 1_000 else { throw WeBeepAPIError.responseTooLarge }
+        var issueCount = 0
+        var identityCounts: [String: Int] = [:]
+        let mapped = sections.compactMap { section -> RemoteContentSection? in
+            guard section.id > 0 else { issueCount += 1; return nil }
+            let modules = (section.modules ?? []).compactMap { module -> RemoteContentModule? in
+                guard module.id > 0, let name = bounded(module.name) else { issueCount += 1; return nil }
+                if let modname = module.modname?.lowercased(), ["forum", "url", "page", "label", "choice", "feedback", "lesson", "wooclap"].contains(modname) {
+                    issueCount += (module.contents ?? []).count
+                    return nil
+                }
+                let moduleContents = module.contents ?? []
+                let isSingleFileResource = module.modname?.lowercased() == "resource" && moduleContents.filter { $0.type == "file" }.count == 1
+                let files = moduleContents.compactMap { content -> RemoteFileCandidate? in
+                    guard content.type == "file" else { return nil }
+                    guard let filename = bounded(content.filename), let remoteFilePath = bounded(content.filepath), content.filesize ?? -1 >= 0, content.timemodified ?? -1 >= 0,
+                          let urlText = content.fileurl, let url = URL(string: urlText), let canonicalPath = canonicalPluginPath(url, policy: policy) else { issueCount += 1; return nil }
+                    let identity = "\(courseID):\(module.id):\(canonicalPath)"
+                    identityCounts[identity, default: 0] += 1
+                    let hasCredentialQuery = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains { $0.name.caseInsensitiveCompare("token") == .orderedSame || $0.name.caseInsensitiveCompare("wstoken") == .orderedSame } == true
+                    let reason: String?
+                    if content.isexternalfile == true { reason = "file esterno" }
+                    else if hasCredentialQuery { reason = "URL con credenziale" }
+                    else { reason = nil }
+                    if reason != nil { issueCount += 1 }
+                    let revision = validContentHash(content.contenthash) ?? "\(Int64(content.timemodified!)):\(content.filesize!)"
+                    return RemoteFileCandidate(
+                        id: identity, courseID: courseID, sectionID: section.id, moduleID: module.id,
+                        sectionName: bounded(section.name) ?? "Senza titolo", moduleName: name,
+                        moduleType: module.modname?.lowercased() ?? "unknown", isSingleFileResource: isSingleFileResource,
+                        filename: filename, remoteFilePath: remoteFilePath, canonicalPluginPath: canonicalPath,
+                        downloadURL: reason == nil ? url : nil, size: content.filesize!,
+                        modifiedAt: content.timemodified.map(Date.init(timeIntervalSince1970:)), observedRevision: revision,
+                        isSupported: reason == nil, ineligibilityReason: reason
+                    )
+                }
+                return RemoteContentModule(id: module.id, name: name, files: files)
+            }
+            return RemoteContentSection(id: section.id, name: bounded(section.name) ?? "Senza titolo", modules: modules)
+        }
+        let duplicateIDs = Set(identityCounts.compactMap { $0.value > 1 ? $0.key : nil })
+        if !duplicateIDs.isEmpty { issueCount += duplicateIDs.count }
+        let resolved = mapped.map { section in
+            RemoteContentSection(id: section.id, name: section.name, modules: section.modules.map { module in
+                RemoteContentModule(id: module.id, name: module.name, files: module.files.map { file in
+                    guard duplicateIDs.contains(file.id) else { return file }
+                    var duplicate = file
+                    duplicate.isSupported = false
+                    duplicate.ineligibilityReason = "identificatore remoto duplicato"
+                    return duplicate
+                })
+            })
+        }
+        return RemoteCourseContents(sections: resolved, issueCount: issueCount)
+    }
+
+    private func request(_ function: AllowedFunction, token: String, fields: [String: String], limit: Int) async throws -> Data {
+        let request = Self.request(function: function, token: token, fields: fields, endpoint: policy.endpoint)
+        let (data, response): (Data, URLResponse)
+        do { (data, response) = try await session.data(for: request) }
+        catch let error as URLError where error.code == .cancelled || error.code == .badServerResponse { throw WeBeepAPIError.unexpectedRedirect }
+        catch { throw WeBeepAPIError.invalidResponse }
+        guard let http = response as? HTTPURLResponse else { throw WeBeepAPIError.invalidResponse }
+        guard (200...299).contains(http.statusCode) else { throw WeBeepAPIError.transport(http.statusCode) }
+        guard http.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("application/json") == true else { throw WeBeepAPIError.invalidResponse }
+        guard data.count <= limit else { throw WeBeepAPIError.responseTooLarge }
+        return data
+    }
+
+    static func validationRequest(token: String) -> URLRequest {
+        request(function: .siteInfo, token: token, fields: [:], endpoint: endpoint)
+    }
+
+    static func coursesRequest(userID: Int, token: String) -> URLRequest {
+        request(function: .courses, token: token, fields: ["userid": String(userID)], endpoint: endpoint)
+    }
+
+    static func contentsRequest(courseID: Int64, token: String) -> URLRequest {
+        request(function: .contents, token: token, fields: ["courseid": String(courseID)], endpoint: endpoint)
+    }
+
+    private static func request(function: AllowedFunction, token: String, fields: [String: String], endpoint: URL) -> URLRequest {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = form(fields.merging(["wstoken": token, "wsfunction": function.rawValue, "moodlewsrestformat": "json"]) { _, required in required })
+        return request
+    }
+
+    private static func form(_ fields: [String: String]) -> Data {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        return fields.sorted { $0.key < $1.key }.map { key, value in
+            "\(key.addingPercentEncoding(withAllowedCharacters: allowed)!)=\(value.addingPercentEncoding(withAllowedCharacters: allowed)!)"
+        }.joined(separator: "&").data(using: .utf8)!
+    }
+
+    private static func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.urlCache = nil
+        configuration.timeoutIntervalForRequest = 15
+        return URLSession(configuration: configuration, delegate: RejectRedirects(), delegateQueue: nil)
+    }
+}
+
+private func bounded(_ value: String?) -> String? {
+    guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty, value.utf8.count <= 512 else { return nil }
+    return value
+}
+
+private func canonicalPluginPath(_ url: URL, policy: WeBeepServerPolicy) -> String? {
+    let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath
+    guard policy.acceptsPluginURL(url),
+          let path, path.hasPrefix("/webservice/pluginfile.php/") || path.hasPrefix("/pluginfile.php/") else { return nil }
+    return path
+}
+
+private func validContentHash(_ value: String?) -> String? {
+    let hexadecimal = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
+    guard let value,
+          (value.utf8.count == 40 || value.utf8.count == 64),
+          value.unicodeScalars.allSatisfy({ hexadecimal.contains($0) }) else { return nil }
+    return value.lowercased()
+}
+
+private enum AllowedFunction: String { case siteInfo = "core_webservice_get_site_info", courses = "core_enrol_get_users_courses", contents = "core_course_get_contents" }
+
+private final class RejectRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+private struct MoodleErrorResponse: Decodable { let exception: String?; let errorcode: String? }
+
+private struct SiteInfoResponse: Decodable {
+    let userid: Int?
+    let siteurl: String?
+    let functions: [Function]?
+    let exception: String?
+    let errorcode: String?
+    struct Function: Decodable { let name: String }
+}
+
+private struct CourseResponse: Decodable {
+    let id: Int64
+    let shortname: String?
+    let fullname: String?
+    let displayname: String?
+    let visible: Int?
+    let startdate: TimeInterval?
+    let enddate: TimeInterval?
+}
+
+private struct SectionResponse: Decodable { let id: Int64; let name: String?; let modules: [ModuleResponse]? }
+private struct ModuleResponse: Decodable { let id: Int64; let name: String?; let modname: String?; let contents: [ContentResponse]? }
+private struct ContentResponse: Decodable {
+    let type: String?
+    let filename: String?
+    let filepath: String?
+    let filesize: Int64?
+    let fileurl: String?
+    let timemodified: TimeInterval?
+    let contenthash: String?
+    let isexternalfile: Bool?
+}
