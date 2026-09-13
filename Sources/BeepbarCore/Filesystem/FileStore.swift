@@ -147,6 +147,7 @@ public actor FileStore {
     public func importDownloadedFile(at source: URL, expectedSize: Int64, maximumSize: Int64) throws -> StagedArtifact {
         let trace = PerformanceTrace.shared.begin("filesystem.import", category: .filesystem)
         defer { PerformanceTrace.shared.end("filesystem.import", category: .filesystem, state: trace) }
+        try Task.checkCancellation()
         guard expectedSize >= 0, expectedSize <= maximumSize else { throw FileStoreError.tooLarge }
         let sourceFD = open(source.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
         guard sourceFD >= 0 else { throw fileStoreError() }
@@ -167,11 +168,13 @@ public actor FileStore {
             var total: Int64 = 0
             var hasher = SHA256()
             while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+                try Task.checkCancellation()
                 total += Int64(chunk.count)
                 guard total <= maximumSize else { throw FileStoreError.tooLarge }
                 hasher.update(data: chunk)
                 try Self.write(chunk, to: stageFD)
             }
+            try Task.checkCancellation()
             guard total == expectedSize else { throw FileStoreError.sizeMismatch }
             guard fsync(stageFD) == 0 else { throw fileStoreError() }
             return StagedArtifact(name: stage.name, identity: stage.identity, stagePath: stage.relativePath, sha256: hasher.finalize().map { String(format: "%02x", $0) }.joined(), size: total)

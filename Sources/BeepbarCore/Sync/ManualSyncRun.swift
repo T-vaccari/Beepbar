@@ -40,8 +40,9 @@ public actor ManualSyncRun {
     private let maximumConcurrentDownloads: Int
     private let allowsExpensiveNetworkAccess: Bool
     private let serverPolicy: WeBeepServerPolicy
+    private let downloader: RemoteDownloader?
 
-    public init(rootID: UUID, database: SyncDatabase, fileStore: FileStore, gate: RootOperationGate, maximumConcurrentDownloads: Int = 3, allowsExpensiveNetworkAccess: Bool = true, serverPolicy: WeBeepServerPolicy = .production) {
+    public init(rootID: UUID, database: SyncDatabase, fileStore: FileStore, gate: RootOperationGate, maximumConcurrentDownloads: Int = 3, allowsExpensiveNetworkAccess: Bool = true, serverPolicy: WeBeepServerPolicy = .production, downloader: RemoteDownloader? = nil) {
         self.rootID = rootID
         self.database = database
         self.fileStore = fileStore
@@ -49,6 +50,7 @@ public actor ManualSyncRun {
         self.maximumConcurrentDownloads = maximumConcurrentDownloads
         self.allowsExpensiveNetworkAccess = allowsExpensiveNetworkAccess
         self.serverPolicy = serverPolicy
+        self.downloader = downloader
     }
 
     public func start(items: [PreparedSyncItem], token: String, progress: @escaping @Sendable (SyncProgress) async -> Void) async throws -> SyncProgress {
@@ -73,7 +75,7 @@ public actor ManualSyncRun {
         var unchanged = 0
         var conflicts = 0
         var failures = 0
-        let downloader = RemoteDownloader(maximumConnections: maximumConcurrentDownloads, allowsExpensiveNetworkAccess: allowsExpensiveNetworkAccess, policy: serverPolicy)
+        let downloader = downloader ?? RemoteDownloader(maximumConnections: maximumConcurrentDownloads, allowsExpensiveNetworkAccess: allowsExpensiveNetworkAccess, policy: serverPolicy)
         try await withThrowingTaskGroup(of: ManualSyncOutcome?.self) { group in
             var next = 0
             func enqueue(_ item: PreparedSyncItem) {

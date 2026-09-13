@@ -1,0 +1,2 @@
+CODE_SIGNING_ALLOWED = NO
+#include? "LocalSigning.xcconfig"

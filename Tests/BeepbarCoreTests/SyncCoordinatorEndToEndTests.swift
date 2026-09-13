@@ -1,0 +1,322 @@
+import Foundation
+import Testing
+@testable import BeepbarCore
+
+@Suite(.serialized) struct SyncCoordinatorEndToEndTests {
+    @Test func installsThousandFilesAndSecondRunDoesNotDownloadAgain() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+
+        let first = try await fixture.synchronize()
+        #expect(first.total == 1_000)
+        #expect(first.installed == 1_000)
+        #expect(fixture.upstream.downloadCount == 1_000)
+        #expect(fixture.upstream.maximumActiveDownloads <= 3)
+
+        fixture.upstream.resetDownloadCount()
+        let second = try await fixture.synchronize()
+        #expect(second.total == 0)
+        #expect(fixture.upstream.downloadCount == 0)
+    }
+
+    @Test func resolvesBothConflictChoicesWithoutReopeningTheConflict() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.synchronize(targets: [fixture.targets[0]])
+
+        let firstID = fixture.remoteID(course: 1, file: 0)
+        let firstBaseline = try #require(await fixture.database.baseline(rootID: fixture.rootID, remoteID: firstID))
+        try Data("local".utf8).write(to: fixture.root.appending(path: firstBaseline.relativePath.value))
+        fixture.upstream.setFile(course: 1, file: 0, value: "remote", revision: "2")
+
+        let conflictProgress = try await fixture.synchronize(targets: [fixture.targets[0]])
+        #expect(conflictProgress.conflicts == 1)
+        let firstConflict = try #require(await fixture.database.conflicts(rootID: fixture.rootID).first)
+        try await ConflictResolver(database: fixture.database, fileStore: try FileStore(root: fixture.root), gate: fixture.gate).keepLocal(id: firstConflict.id)
+        #expect(try await fixture.synchronize(targets: [fixture.targets[0]]).conflicts == 0)
+        #expect(try await fixture.database.conflicts(rootID: fixture.rootID).isEmpty)
+        #expect(try Data(contentsOf: fixture.root.appending(path: firstBaseline.relativePath.value)) == Data("local".utf8))
+
+        let secondID = fixture.remoteID(course: 1, file: 1)
+        let secondBaseline = try #require(await fixture.database.baseline(rootID: fixture.rootID, remoteID: secondID))
+        try Data("local-second".utf8).write(to: fixture.root.appending(path: secondBaseline.relativePath.value))
+        fixture.upstream.setFile(course: 1, file: 1, value: "remote-second", revision: "2")
+        #expect(try await fixture.synchronize(targets: [fixture.targets[0]]).conflicts == 1)
+        let secondConflict = try #require(await fixture.database.conflicts(rootID: fixture.rootID).first)
+        _ = try await ConflictResolver(database: fixture.database, fileStore: try FileStore(root: fixture.root), gate: fixture.gate).useRemote(id: secondConflict.id)
+        #expect(try Data(contentsOf: fixture.root.appending(path: secondBaseline.relativePath.value)) == Data("remote-second".utf8))
+        #expect(try await fixture.database.conflicts(rootID: fixture.rootID).isEmpty)
+    }
+
+    @Test func keepsFileAndBaselineOn404AndReinstallsDeletedFile() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.synchronize(targets: [fixture.targets[0]])
+        let remoteID = fixture.remoteID(course: 1, file: 0)
+        let baseline = try #require(await fixture.database.baseline(rootID: fixture.rootID, remoteID: remoteID))
+        let destination = fixture.root.appending(path: baseline.relativePath.value)
+        let original = try Data(contentsOf: destination)
+
+        fixture.upstream.setFile(course: 1, file: 0, value: "changed", revision: "2")
+        fixture.upstream.setStatus(course: 1, file: 0, status: 404)
+        let failed = try await fixture.synchronize(targets: [fixture.targets[0]])
+        #expect(failed.failures == 1)
+        #expect(try Data(contentsOf: destination) == original)
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: remoteID) == baseline)
+
+        fixture.upstream.setStatus(course: 1, file: 0, status: 200)
+        try FileManager.default.removeItem(at: destination)
+        let restored = try await fixture.synchronize(targets: [fixture.targets[0]])
+        #expect(restored.installed == 1)
+        #expect(try Data(contentsOf: destination) == Data("changed".utf8))
+    }
+
+    @Test func cancellationLeavesNoBaselineOrStagingArtifacts() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.setFile(course: 1, file: 0, value: String(repeating: "x", count: 65_536), revision: "2")
+        fixture.upstream.downloadDelay = 1
+        let task = Task { try await fixture.synchronize(targets: [fixture.targets[0]]) }
+        try await Task.sleep(for: .milliseconds(100))
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(try await fixture.database.baselines(rootID: fixture.rootID).isEmpty)
+        #expect(fixture.stagingFiles().isEmpty)
+    }
+
+    @Test func downloadConcurrencyIsBoundedAndProgressIsMonotonic() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.downloadDelay = 0.01
+        let recorder = ProgressRecorder()
+        _ = try await fixture.coordinator.synchronize(targets: [fixture.targets[0]], token: "test-token", mode: .manual) { update in recorder.append(update) }
+        let progress = recorder.values
+        #expect(fixture.upstream.maximumActiveDownloads == 3)
+        #expect(progress.count == 100)
+        #expect(progress.enumerated().allSatisfy { $0.element.completed == $0.offset + 1 })
+        #expect(progress.last?.completed == progress.last?.total)
+    }
+
+    @Test func cancellationDuringStagingPreservesExistingFileAndBaseline() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.synchronize(targets: [fixture.targets[0]])
+        let remoteID = fixture.remoteID(course: 1, file: 0)
+        let baseline = try #require(await fixture.database.baseline(rootID: fixture.rootID, remoteID: remoteID))
+        let destination = fixture.root.appending(path: baseline.relativePath.value)
+        let original = try Data(contentsOf: destination)
+        fixture.upstream.setFile(course: 1, file: 0, value: String(repeating: "x", count: 67_108_864), revision: "2")
+        fixture.upstream.downloadDelay = 0.01
+
+        let task = Task { try await fixture.synchronize(targets: [fixture.targets[0]]) }
+        var stageCreated = false
+        for _ in 0..<2_000 {
+            if !fixture.stagingFiles().isEmpty {
+                stageCreated = true
+                task.cancel()
+                break
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(stageCreated)
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(try Data(contentsOf: destination) == original)
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: remoteID) == baseline)
+        #expect(fixture.stagingFiles().isEmpty)
+    }
+
+    @Test func missingRootAndConcurrentRunsDoNotMutateState() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.downloadDelay = 1
+        let first = Task { try await fixture.synchronize(targets: [fixture.targets[0]]) }
+        try await Task.sleep(for: .milliseconds(100))
+        await #expect(throws: RootOperationGateError.self) { try await fixture.synchronize(targets: [fixture.targets[0]], mode: .automatic) }
+        first.cancel()
+        _ = try? await first.value
+
+        try FileManager.default.removeItem(at: fixture.root)
+        await #expect(throws: FileStoreError.self) { try await fixture.synchronize(targets: [fixture.targets[0]]) }
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.path))
+    }
+
+private final class Fixture: @unchecked Sendable {
+        let root: URL
+        let rootID = UUID()
+        let database: SyncDatabase
+        let upstream = MutableFixtureUpstream()
+        let policy = WeBeepServerPolicy(endpoint: URL(string: "https://fixture.beepbar.test/webservice/rest/server.php")!, siteURL: URL(string: "https://fixture.beepbar.test")!, scheme: "https", host: "fixture.beepbar.test", port: 443)
+        let gate = RootOperationGate()
+        let targets = (1...10).map { SyncTarget(courseID: Int64($0), localFolder: "Course \($0)") }
+        let coordinator: SyncCoordinator
+
+        init() async throws {
+            root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            database = try SyncDatabase(url: root.appending(path: "state.sqlite"))
+            FixtureURLProtocol.upstream = upstream
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [FixtureURLProtocol.self]
+            let session = URLSession(configuration: configuration)
+            let client = WeBeepAPIClient(policy: policy, session: session)
+            let downloader = RemoteDownloader(session: session, policy: policy)
+            coordinator = try SyncCoordinator(rootID: rootID, rootURL: root, database: database, gate: gate, apiClient: client, downloader: downloader)
+            try await database.registerRoot(id: rootID, canonicalPath: root.path)
+            for target in targets {
+                try await database.upsertScope(SyncScope(rootID: rootID, courseID: target.courseID, displayName: target.localFolder, localFolder: target.localFolder, enabled: true))
+            }
+            upstream.populate(courses: 10, filesPerCourse: 100)
+        }
+
+        func synchronize(targets: [SyncTarget]? = nil, mode: SyncCoordinatorMode = .manual) async throws -> SyncProgress {
+            try await coordinator.synchronize(targets: targets ?? self.targets, token: "test-token", mode: mode) { _ in }
+        }
+
+        func remoteID(course: Int64, file: Int) -> String { "\(course):\(course * 100):/webservice/pluginfile.php/\(course)/\(file).txt" }
+
+        func stagingFiles() -> [URL] {
+            let staging = root.appending(path: ".beepbar/staging", directoryHint: .isDirectory)
+            return (try? FileManager.default.contentsOfDirectory(at: staging, includingPropertiesForKeys: nil)) ?? []
+        }
+
+        func remove() { try? FileManager.default.removeItem(at: root) }
+    }
+}
+
+private final class ProgressRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [SyncProgress] = []
+
+    func append(_ update: SyncProgress) { lock.withLock { storage.append(update) } }
+    var values: [SyncProgress] { lock.withLock { storage } }
+}
+
+private final class MutableFixtureUpstream: @unchecked Sendable {
+    private struct File { var value: Data; var revision: String; var status = 200 }
+    private let lock = NSLock()
+    private var files: [Int64: [Int: File]] = [:]
+    private var downloads = 0
+    private var activeDownloads = 0
+    private var peakDownloads = 0
+    var downloadDelay: TimeInterval = 0
+
+    var downloadCount: Int { lock.withLock { downloads } }
+    var maximumActiveDownloads: Int { lock.withLock { peakDownloads } }
+    func resetDownloadCount() { lock.withLock { downloads = 0 } }
+
+    func populate(courses: Int, filesPerCourse: Int) {
+        lock.withLock {
+            files = Dictionary(uniqueKeysWithValues: (1...courses).map { course in
+                (Int64(course), Dictionary(uniqueKeysWithValues: (0..<filesPerCourse).map { index in (index, File(value: Data("x".utf8), revision: "1")) }))
+            })
+        }
+    }
+
+    func setFile(course: Int64, file: Int, value: String, revision: String) {
+        lock.withLock {
+            let status = files[course]?[file]?.status ?? 200
+            files[course]?[file] = File(value: Data(value.utf8), revision: revision, status: status)
+        }
+    }
+    func setStatus(course: Int64, file: Int, status: Int) { lock.withLock { guard var value = files[course]?[file] else { return }; value.status = status; files[course]?[file] = value } }
+
+    func response(for request: URLRequest) -> (HTTPURLResponse, Data, TimeInterval, Bool) {
+        lock.withLock {
+            let url = request.url!
+            if request.httpMethod == "POST" {
+                let body = String(data: request.httpBody ?? bodyData(from: request.httpBodyStream), encoding: .utf8) ?? ""
+                let course = Int64(formValue("courseid", body: body) ?? "") ?? 0
+                let response = contents(course: course)
+                return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, response, 0, false)
+            }
+            let parts = url.path.split(separator: "/")
+            guard parts.count >= 4, let course = Int64(parts[2]), let index = Int(parts[3].split(separator: ".")[0]), let file = files[course]?[index] else {
+                return (HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: ["Content-Length": "0"])!, Data(), 0, true)
+            }
+            downloads += 1
+            activeDownloads += 1
+            peakDownloads = max(peakDownloads, activeDownloads)
+            return (HTTPURLResponse(url: url, statusCode: file.status, httpVersion: nil, headerFields: ["Content-Length": "\(file.value.count)"])!, file.value, downloadDelay, true)
+        }
+    }
+
+    func finishDownload() { lock.withLock { activeDownloads = max(0, activeDownloads - 1) } }
+
+    private func contents(course: Int64) -> Data {
+        let values = files[course] ?? [:]
+        let contents: [[String: Any]] = values.keys.sorted().compactMap { index in
+            guard let file = values[index] else { return nil }
+            let contentHash = String(repeating: file.revision == "1" ? "a" : "b", count: 40)
+            return ["type": "file", "filename": "\(index).txt", "filepath": "/", "filesize": file.value.count, "timemodified": 1, "contenthash": contentHash, "fileurl": "https://fixture.beepbar.test/webservice/pluginfile.php/\(course)/\(index).txt"]
+        }
+        return try! JSONSerialization.data(withJSONObject: [["id": course, "name": "Materiali", "modules": [["id": course * 100, "name": "Lezioni", "modname": "folder", "contents": contents]]]])
+    }
+
+    private func formValue(_ name: String, body: String) -> String? {
+        body.split(separator: "&").first { $0.hasPrefix("\(name)=") }.flatMap { String($0.dropFirst(name.count + 1)).removingPercentEncoding }
+    }
+
+    private func bodyData(from stream: InputStream?) -> Data {
+        guard let stream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var result = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            result.append(buffer, count: count)
+        }
+        return result
+    }
+}
+
+private final class FixtureURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var upstream: MutableFixtureUpstream!
+    private var workItem: DispatchWorkItem?
+    private let completionLock = NSLock()
+    private var isDownload = false
+    private var downloadFinished = false
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let (response, data, delay, isDownload) = Self.upstream.response(for: request)
+        self.isDownload = isDownload
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            if delay > 0, !data.isEmpty {
+                let split = max(1, data.count / 2)
+                self.client?.urlProtocol(self, didLoad: data.prefix(split))
+                DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self else { return }
+                    guard self.workItem?.isCancelled != true else { self.finishDownloadIfNeeded(); return }
+                    self.client?.urlProtocol(self, didLoad: data.dropFirst(split))
+                    self.client?.urlProtocolDidFinishLoading(self)
+                    self.finishDownloadIfNeeded()
+                }
+                return
+            }
+            if !data.isEmpty { self.client?.urlProtocol(self, didLoad: data) }
+            self.client?.urlProtocolDidFinishLoading(self)
+            self.finishDownloadIfNeeded()
+        }
+        workItem = item
+        item.perform()
+    }
+
+    override func stopLoading() {
+        workItem?.cancel()
+        finishDownloadIfNeeded()
+    }
+
+    private func finishDownloadIfNeeded() {
+        completionLock.withLock {
+            guard isDownload, !downloadFinished else { return }
+            downloadFinished = true
+            Self.upstream.finishDownload()
+        }
+    }
+}

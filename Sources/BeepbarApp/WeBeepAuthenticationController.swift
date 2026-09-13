@@ -100,12 +100,11 @@ enum AccountState: Equatable {
     @Published private(set) var conflicts: [ConflictRecord] = []
     @Published private(set) var resolvingConflictID: UUID?
     private var loginWindow: LoginWindowController?
-    private var pendingToken: String?
     private var siteInfo: WeBeepSiteInfo?
     private var database: SyncDatabase?
     private let operationGate = RootOperationGate()
     private let apiClient: WeBeepAPIClient
-    private let credentialService = CredentialService()
+    private let credentialVault = CredentialVault(read: KeychainTokenStore.load, write: KeychainTokenStore.save)
     private let notificationCoordinator = SyncNotificationCoordinator()
     private var backgroundScheduler: NSBackgroundActivityScheduler?
     private var syncTask: Task<Void, Never>?
@@ -137,14 +136,24 @@ enum AccountState: Equatable {
                 let result = try await bootstrap.prepare(databaseDirectory: Self.databaseDirectory(), rootURL: rootURL, rootID: rootID, gate: operationGate)
                 guard let self else { return }
                 self.database = result.database
-                self.hasStoredCredential = result.hasStoredCredential
-                self.accountState = result.hasStoredCredential ? .connected : .notConnected
                 if result.recoveryBlocked {
                     self.recoveryBlocked = true
                     self.setSyncState(.recoveryBlocked)
                 } else {
-                    await self.restorePersistedSyncState()
-                    self.configureBackgroundScheduler()
+                    switch result.credential {
+                    case .present:
+                        self.hasStoredCredential = true
+                        self.accountState = .connected
+                        await self.restorePersistedSyncState()
+                        self.configureBackgroundScheduler()
+                    case .absent:
+                        self.hasStoredCredential = false
+                        self.accountState = .notConnected
+                        await self.restorePersistedSyncState()
+                        self.configureBackgroundScheduler()
+                    case .unavailable(let error):
+                        await self.handleKeychainError(error)
+                    }
                 }
             } catch {
                 self?.setSyncState(.failed("Impossibile preparare lo stato locale. Riapri Beepbar."))
@@ -304,7 +313,7 @@ enum AccountState: Equatable {
         syncTask = Task { [weak self] in
             do {
                 guard let self else { return }
-                let token = try await self.credentialService.load()
+                let token = try await self.credentialVault.load()
                 let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient)
                 await self.beginTransfer(operationID, automatic: false)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .manual) { [weak self] progress in
@@ -315,6 +324,9 @@ enum AccountState: Equatable {
                 self?.cancelledSync(operationID)
             } catch let error as WeBeepAPIError where error == .invalidToken {
                 await self?.failedSync(operationID, expired: true, automatic: false)
+            } catch let error as KeychainError {
+                await self?.handleKeychainError(error)
+                self?.endOperation(operationID)
             } catch {
                 await self?.failedSync(operationID, expired: false, automatic: false)
             }
@@ -386,16 +398,16 @@ enum AccountState: Equatable {
             defer { self?.isVerifying = false }
             do {
                 guard let self else { return }
-                let token = try await self.credentialService.load()
+                let token = try await self.credentialVault.load()
                 let siteInfo = try await self.apiClient.validateToken(token)
                 self.siteInfo = siteInfo
                 self.accountState = .connected
                 self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
                 self.configureBackgroundScheduler()
             } catch let error as WeBeepAPIError where error == .invalidToken {
-                self?.accountState = .expired
-                self?.setSyncState(.failed("La sessione WeBeep è scaduta. Accedi di nuovo."))
-                self?.configureBackgroundScheduler()
+                await self?.expireCredential()
+            } catch let error as KeychainError {
+                await self?.handleKeychainError(error)
             } catch {
                 self?.setSyncState(.failed("Non è stato possibile verificare WeBeep. Riprova più tardi."))
             }
@@ -409,7 +421,7 @@ enum AccountState: Equatable {
             defer { self?.isLoadingCourses = false }
             do {
                 guard let self else { return }
-                let token = try await self.credentialService.load()
+                let token = try await self.credentialVault.load()
                 let siteInfo: WeBeepSiteInfo
                 if let existing = self.siteInfo {
                     siteInfo = existing
@@ -423,9 +435,9 @@ enum AccountState: Equatable {
                 self.accountState = .connected
                 if case .starting = self.syncState { self.setSyncState(.readyUnchecked) }
             } catch let error as WeBeepAPIError where error == .invalidToken {
-                self?.accountState = .expired
-                self?.setSyncState(.failed("La sessione WeBeep è scaduta. Accedi di nuovo."))
-                self?.configureBackgroundScheduler()
+                await self?.expireCredential()
+            } catch let error as KeychainError {
+                await self?.handleKeychainError(error)
             } catch {
                 self?.setSyncState(.failed("Non è stato possibile aggiornare i corsi. Riprova più tardi."))
             }
@@ -466,11 +478,15 @@ enum AccountState: Equatable {
             defer { self?.isLoadingContents = false }
             do {
                 guard let self else { return }
-                let token = try await self.credentialService.load()
+                let token = try await self.credentialVault.load()
                 let contents = try await self.apiClient.fetchContents(courseID: selectedCourse.id, token: token)
                 guard self.selectedCourse?.id == selectedCourse.id else { return }
                 self.contents = contents
-                self.status = "Contenuti caricati solo in memoria."
+                self.status = "Contenuti pronti."
+            } catch let error as WeBeepAPIError where error == .invalidToken {
+                await self?.expireCredential()
+            } catch let error as KeychainError {
+                await self?.handleKeychainError(error)
             } catch { self?.status = "Impossibile caricare i contenuti. Nessun dato locale è stato modificato." }
         }
     }
@@ -484,10 +500,17 @@ enum AccountState: Equatable {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
             let result = try KeychainTokenStore.migrateLegacyCredential()
-            hasStoredCredential = true
-            status = result == .legacyRetained
-                ? "Credenziale migrata. Il vecchio elemento può essere rimosso manualmente dal Portachiavi."
-                : "Credenziale migrata nel nuovo accesso firmato."
+            Task { [weak self] in
+                guard let self else { return }
+                await self.credentialVault.invalidate()
+                self.hasStoredCredential = true
+                self.accountState = .connected
+                self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
+                self.configureBackgroundScheduler()
+                self.status = result == .legacyRetained
+                    ? "Credenziale migrata. Il vecchio elemento può essere rimosso manualmente dal Portachiavi."
+                    : "Credenziale migrata nel nuovo accesso firmato."
+            }
         } catch {
             status = "Migrazione non riuscita. Il vecchio token non è stato modificato: puoi accedere di nuovo."
         }
@@ -497,9 +520,20 @@ enum AccountState: Equatable {
         loginWindow = nil; isAuthenticating = false
         siteInfo = nil; courses = []; selectedCourse = nil; contents = nil
         guard case let .success(callback) = result, let token = token(from: callback) else {
-            status = "Accesso WeBeep annullato o callback non valido."; pendingToken = nil; return
+            status = "Accesso WeBeep annullato o callback non valido."; return
         }
-        pendingToken = token; confirmKeychainSave()
+        Task { [weak self] in
+            do {
+                guard let self else { return }
+                try await self.credentialVault.save(token)
+                self.hasStoredCredential = true
+                self.accountState = .connected
+                self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
+                self.configureBackgroundScheduler()
+            } catch {
+                self?.status = "Accesso completato, ma il Portachiavi ha rifiutato il token."
+            }
+        }
     }
 
     private func token(from callback: URL) -> String? {
@@ -514,23 +548,6 @@ enum AccountState: Equatable {
         let fields = decoded.components(separatedBy: ":::")
         guard (fields.count == 2 || fields.count == 3), fields.allSatisfy({ !$0.isEmpty }) else { return nil }
         return fields[1]
-    }
-
-    private func confirmKeychainSave() {
-        let alert = NSAlert(); alert.messageText = "Collegare Beepbar a WeBeep?"
-        alert.informativeText = "Il token verrà salvato solo nel Portachiavi di macOS. Beepbar non scaricherà materiali in questa verifica."
-        alert.addButton(withTitle: "Salva nel Portachiavi"); alert.addButton(withTitle: "Non salvare")
-        if alert.runModal() == .alertFirstButtonReturn, let pendingToken {
-            do {
-                try KeychainTokenStore.save(pendingToken)
-                hasStoredCredential = true
-                accountState = .connected
-                setSyncState(rootURL == nil ? .needsFolder : .readyUnchecked)
-                configureBackgroundScheduler()
-            }
-            catch { status = "Accesso completato, ma il Portachiavi ha rifiutato il token." }
-        } else { status = "Accesso completato, token non salvato." }
-        self.pendingToken = nil
     }
 
     private static func storedRootID() -> UUID? {
@@ -646,7 +663,7 @@ enum AccountState: Equatable {
         let task = Task { [weak self] in
             do {
                 guard let self else { return }
-                let token = try await self.credentialService.load()
+                let token = try await self.credentialVault.load()
                 let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient)
                 await self.beginTransfer(operationID, automatic: true)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .automatic) { [weak self] progress in
@@ -657,6 +674,9 @@ enum AccountState: Equatable {
                 self?.cancelledSync(operationID)
             } catch let error as WeBeepAPIError where error == .invalidToken {
                 await self?.failedSync(operationID, expired: true, automatic: true)
+            } catch let error as KeychainError {
+                await self?.handleKeychainError(error)
+                self?.endOperation(operationID)
             } catch is RootOperationGateError {
                 self?.deferredAutomaticSync(operationID)
             } catch {
@@ -697,14 +717,36 @@ enum AccountState: Equatable {
     private func failedSync(_ operationID: UUID, expired: Bool, automatic: Bool) async {
         guard activeOperationID == operationID else { return }
         if expired {
-            accountState = .expired
-            setSyncState(.failed("La sessione WeBeep è scaduta. Accedi di nuovo."))
-            configureBackgroundScheduler()
+            await expireCredential()
         } else {
             setSyncState(.failed(automatic ? "Il controllo automatico non è riuscito. I file locali non sono stati modificati." : "Non è stato possibile controllare gli aggiornamenti. I file locali non sono stati modificati."))
             if automatic { await notificationCoordinator.notifyAutomaticRun(installed: 0, conflicts: 0, failures: 1) }
         }
         endOperation(operationID)
+    }
+
+    private func expireCredential() async {
+        await credentialVault.invalidate()
+        accountState = .expired
+        setSyncState(.failed("La sessione WeBeep è scaduta. Accedi di nuovo."))
+        configureBackgroundScheduler()
+    }
+
+    private func handleKeychainError(_ error: KeychainError) async {
+        await credentialVault.invalidate()
+        hasStoredCredential = false
+        switch error {
+        case .absent, .corrupt:
+            accountState = .notConnected
+            setSyncState(.loginRequired)
+        case .accessDenied:
+            accountState = .notConnected
+            setSyncState(.failed("Beepbar non può leggere il Portachiavi. Controlla l'accesso e riprova."))
+        case .write, .read:
+            accountState = .notConnected
+            setSyncState(.failed("Il Portachiavi non è disponibile. Riprova più tardi."))
+        }
+        configureBackgroundScheduler()
     }
 
     private func endOperation(_ operationID: UUID) {
@@ -755,15 +797,17 @@ private actor SyncProgressRelay {
     }
 }
 
-private actor CredentialService {
-    func load() throws -> String { try KeychainTokenStore.load() }
-}
-
 private actor BootstrapService {
     struct Result: Sendable {
         let database: SyncDatabase
         let recoveryBlocked: Bool
-        let hasStoredCredential: Bool
+        let credential: CredentialStatus
+    }
+
+    enum CredentialStatus: Sendable {
+        case present
+        case absent
+        case unavailable(KeychainError)
     }
 
     func prepare(databaseDirectory: URL, rootURL: URL?, rootID: UUID?, gate: RootOperationGate) async throws -> Result {
@@ -771,13 +815,18 @@ private actor BootstrapService {
         defer { PerformanceTrace.shared.end("bootstrap.databaseRecovery", category: .bootstrap, state: trace) }
         try FileManager.default.createDirectory(at: databaseDirectory, withIntermediateDirectories: true)
         let database = try SyncDatabase(url: databaseDirectory.appendingPathComponent("sync.sqlite"))
-        let hasStoredCredential = KeychainTokenStore.hasStoredCredential()
-        guard let rootURL, let rootID else { return Result(database: database, recoveryBlocked: false, hasStoredCredential: hasStoredCredential) }
+        let credential: CredentialStatus
+        do {
+            credential = try KeychainTokenStore.containsCredential() ? .present : .absent
+        } catch let error as KeychainError {
+            credential = .unavailable(error)
+        }
+        guard let rootURL, let rootID else { return Result(database: database, recoveryBlocked: false, credential: credential) }
         try await database.registerRoot(id: rootID, canonicalPath: rootURL.path)
         let report = try await gate.withLease(.recovering) {
             try await RecoveryCoordinator(rootID: rootID, database: database, fileStore: try FileStore(root: rootURL)).recover()
         }
-        return Result(database: database, recoveryBlocked: !report.unresolved.isEmpty, hasStoredCredential: hasStoredCredential)
+        return Result(database: database, recoveryBlocked: !report.unresolved.isEmpty, credential: credential)
     }
 }
 
@@ -884,8 +933,8 @@ private enum AutomaticSyncOutcome {
 
 private enum KeychainTokenStore {
     private static let account = "webeep.mobile.token"
-    private static let legacyService = "io.github.tvaccari.beepbar"
-    private static let service = "io.github.tvaccari.beepbar.auth.local.v2"
+    private static let service = "io.github.tvaccari.beepbar.auth.local.v3"
+    private static let legacyServices = ["io.github.tvaccari.beepbar.auth.local.v2", "io.github.tvaccari.beepbar"]
 
     enum MigrationResult { case migrated, legacyRetained }
 
@@ -902,23 +951,30 @@ private enum KeychainTokenStore {
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         query[kSecReturnData as String] = true
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let token = String(data: data, encoding: .utf8) else { throw KeychainError.read }
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess else { throw KeychainError(status: status) }
+        guard let data = result as? Data, let token = String(data: data, encoding: .utf8), !token.isEmpty else {
+            throw KeychainError.corrupt
+        }
         return token
     }
 
-    static func hasStoredCredential() -> Bool {
-        (try? load()) != nil
+    static func containsCredential() throws -> Bool {
+        var query = currentQuery()
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        if status == errSecSuccess { return true }
+        if status == errSecItemNotFound { return false }
+        throw KeychainError(status: status)
     }
 
     static func migrateLegacyCredential() throws -> MigrationResult {
-        guard !hasStoredCredential() else { return .migrated }
+        guard try !containsCredential() else { return .migrated }
         let legacyToken = try loadLegacyCredential()
         try addLocalCredential(legacyToken)
-        guard try load() == legacyToken else { throw KeychainError.read }
-        let deletion = SecItemDelete(legacyQuery() as CFDictionary)
-        return deletion == errSecSuccess || deletion == errSecItemNotFound ? .migrated : .legacyRetained
+        guard try load() == legacyToken else { throw KeychainError.corrupt }
+        let deletions = legacyServices.map { SecItemDelete(legacyQuery(service: $0) as CFDictionary) }
+        return deletions.allSatisfy { $0 == errSecSuccess || $0 == errSecItemNotFound } ? .migrated : .legacyRetained
     }
 
     private static func currentQuery() -> [String: Any] {
@@ -929,19 +985,23 @@ private enum KeychainTokenStore {
         ]
     }
 
-    private static func legacyQuery() -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: legacyService, kSecAttrAccount as String: account]
+    private static func legacyQuery(service: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
     }
 
     private static func loadLegacyCredential() throws -> String {
-        var query = legacyQuery()
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        query[kSecReturnData as String] = true
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let token = String(data: data, encoding: .utf8) else { throw KeychainError.read }
-        return token
+        for service in legacyServices {
+            var query = legacyQuery(service: service)
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            query[kSecReturnData as String] = true
+            var result: CFTypeRef?
+            if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+               let data = result as? Data,
+               let token = String(data: data, encoding: .utf8) {
+                return token
+            }
+        }
+        throw KeychainError.absent
     }
 
     private static func addLocalCredential(_ token: String) throws {
@@ -951,4 +1011,19 @@ private enum KeychainTokenStore {
         guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw KeychainError.write }
     }
 }
-private enum KeychainError: Error { case write, read }
+
+private enum KeychainError: Error, Sendable {
+    case write
+    case absent
+    case accessDenied
+    case corrupt
+    case read(OSStatus)
+
+    init(status: OSStatus) {
+        switch status {
+        case errSecItemNotFound: self = .absent
+        case errSecAuthFailed, errSecInteractionNotAllowed: self = .accessDenied
+        default: self = .read(status)
+        }
+    }
+}

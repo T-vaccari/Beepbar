@@ -6,5 +6,6 @@ DerivedData/
 PerformanceReports/
 *.trace
 *.tracev3
+Config/LocalSigning.xcconfig
 xcuserdata/
 *.xcuserstate

@@ -21,6 +21,7 @@
 		A10000000000000000000012 /* WeBeepAuthenticationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeBeepAuthenticationController.swift; sourceTree = "<group>"; };
 		A10000000000000000000014 /* BeepbarShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BeepbarShellView.swift; sourceTree = "<group>"; };
 		A10000000000000000000013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000015 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000021 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		A10000000000000000000022 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
@@ -64,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000013 /* Info.plist */,
+				A10000000000000000000015 /* Signing.xcconfig */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -170,9 +172,9 @@
 		};
 		A10000000000000000000083 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000015 /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
-				CODE_SIGNING_ALLOWED = NO;
 				CURRENT_PROJECT_VERSION = 2;
 				MARKETING_VERSION = 2.0;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -187,9 +189,9 @@
 		};
 		A10000000000000000000084 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000015 /* Signing.xcconfig */;
 			buildSettings = {
 				ARCHS = arm64;
-				CODE_SIGNING_ALLOWED = NO;
 				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				MARKETING_VERSION = 2.0;
