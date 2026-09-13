@@ -19,7 +19,6 @@ let package = Package(
             dependencies: ["BeepbarCore"],
             linkerSettings: [.linkedFramework("Security"), .linkedFramework("WebKit")]
         ),
-        .executableTarget(name: "BeepbarPerformanceHarness", dependencies: ["BeepbarCore"], path: "PerformanceHarness"),
         .testTarget(name: "BeepbarCoreTests", dependencies: ["BeepbarCore"]),
     ]
 )

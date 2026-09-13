@@ -525,13 +525,17 @@ enum AccountState: Equatable {
         Task { [weak self] in
             do {
                 guard let self else { return }
+                let siteInfo = try await self.apiClient.validateToken(token)
                 try await self.credentialVault.save(token)
+                self.siteInfo = siteInfo
                 self.hasStoredCredential = true
                 self.accountState = .connected
                 self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
                 self.configureBackgroundScheduler()
+            } catch let error as WeBeepAPIError where error == .invalidToken {
+                self?.status = "Il token ricevuto non è valido. Accedi di nuovo a WeBeep."
             } catch {
-                self?.status = "Accesso completato, ma il Portachiavi ha rifiutato il token."
+                self?.status = "Impossibile verificare l'accesso WeBeep. Il token non è stato salvato."
             }
         }
     }
