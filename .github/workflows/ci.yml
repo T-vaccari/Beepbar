@@ -27,8 +27,11 @@ jobs:
       - name: Build arm64 Release app
         run: xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release build CODE_SIGNING_ALLOWED=NO
       - name: Verify app
-        run: file build/Release/Beepbar.app/Contents/MacOS/Beepbar | grep -q 'arm64'
-      - name: Create unsigned DMG
+        run: |
+          file build/Release/Beepbar.app/Contents/MacOS/Beepbar | grep -q 'arm64'
+          codesign --force --sign - --identifier io.github.tvaccari.beepbar build/Release/Beepbar.app
+          codesign --verify --deep --strict --verbose=2 build/Release/Beepbar.app
+      - name: Create DMG
         run: scripts/create-dmg.sh build/Release/Beepbar.app build/Beepbar.dmg
       - uses: actions/upload-artifact@v4
         with:

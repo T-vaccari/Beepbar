@@ -8,11 +8,11 @@ A native macOS app for syncing WeBeep materials locally. Beepbar is built specif
 
 ## TL;DR / Install
 
-1. [Download Beepbar.dmg](https://github.com/T-vaccari/Beepbar/releases/download/v0.1.0-beta.1/Beepbar.dmg) and drag Beepbar into Applications.
+1. [Download Beepbar.dmg](https://github.com/T-vaccari/Beepbar/releases/download/v0.1.0-beta.1/Beepbar.dmg), double-click it, then drag Beepbar into Applications.
 2. On first launch, right-click Beepbar and choose **Open**. If macOS blocks it, go to **System Settings > Privacy & Security** and choose **Open Anyway**.
 3. Open Beepbar from the menu bar, sign in to WeBeep in the browser, and choose the local sync folder.
 
-`Beepbar.dmg` is not signed or notarized because this project does not use an Apple Developer account. The initial Gatekeeper step is therefore expected. Advanced users can remove the quarantine attribute after moving the app into Applications:
+`Beepbar.dmg` is ad-hoc signed so macOS can verify its integrity, but it is not Developer ID signed or notarized because this project does not use an Apple Developer account. The initial Gatekeeper step is therefore expected. If it still blocks the app after moving it into Applications, use this fallback:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Beepbar.app
@@ -48,6 +48,6 @@ xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release bui
 scripts/create-dmg.sh build/Release/Beepbar.app build/Beepbar.dmg
 ```
 
-CI runs the tests and builds an unsigned arm64 DMG.
+CI runs the tests and builds an ad-hoc-signed arm64 DMG.
 
 Beepbar is not affiliated with Politecnico di Milano or WeBeep.
