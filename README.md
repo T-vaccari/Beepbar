@@ -1,37 +1,37 @@
 # Beepbar
 
-Companion macOS nativo e non ufficiale per sincronizzare in locale i materiali di WeBeep.
+An unofficial native macOS app for syncing WeBeep course materials locally. It is deliberately vertical: Apple Silicon only, lightweight in the background, and built around one safety guarantee that other sync clients often miss — local work is never silently overwritten.
 
-Beepbar salva il token nel Portachiavi di macOS e non sovrascrive mai in silenzio file modificati localmente: le versioni in conflitto restano separate finché non scegli quale mantenere.
+## Features
 
-## Funzionalità
+- discreet menu-bar app with clear sync status and contextual actions;
+- browser-based WeBeep login, with the token stored in the macOS Keychain;
+- manual or configurable automatic sync;
+- controlled parallel downloads, byte-level progress, and real cancellation;
+- selectable sync root and editable course-folder names;
+- three-way sync backed by SQLite, atomic staging, and rename-on-commit;
+- explicit conflict resolution: keep the local version or deliberately replace it with the remote one.
 
-- menu bar discreta con stato di sincronizzazione e azione contestuale;
-- accesso WeBeep nel browser e token custodito nel Portachiavi di macOS;
-- sincronizzazione manuale o automatica configurabile;
-- download paralleli controllati, progresso e annullamento reale;
-- rinomina delle cartelle dei corsi e scelta della cartella radice;
-- sync three-way con baseline SQLite, staging e rename atomico;
-- risoluzione esplicita dei conflitti: conserva locale oppure usa il remoto.
+## Why Beepbar
 
-## Perché Beepbar
+I wanted a macOS-only client that could stay in the background without becoming another heavy app: responsive when opened, quiet when idle, and focused solely on WeBeep materials instead of cross-platform abstractions.
 
-Beepbar è pensata solo per macOS e Apple Silicon: non usa Electron, non tenta di essere multipiattaforma e non sincronizza mai modifiche locali alla cieca. La UI principale si apre solo dalla menu bar; il lavoro di rete e filesystem resta isolato dalla UI.
+The core reason is safety. Imagine editing a PDF locally and then finding a newer remote copy: a conventional client may overwrite your edit because the two files differ. Beepbar detects that both versions changed, keeps them separate, and asks you which one to keep. Nothing is discarded until you make that choice.
 
-In una misura locale preliminare della build Release, con sincronizzazione automatica disattivata, è rimasta per 30 minuti intorno a 14–15 MiB di memoria con CPU praticamente inattiva. È un riferimento di sviluppo, non una garanzia universale.
+In a preliminary local measurement of the Release build, with automatic sync disabled, Beepbar stayed around 14–15 MiB of memory for 30 minutes with effectively idle CPU use. This is a development reference, not a universal guarantee.
 
-## Requisiti
+## Requirements
 
-- macOS 14 o successivo
+- macOS 14 or later
 - Apple Silicon
 
-## Installazione
+## Installation
 
-1. Scarica `Beepbar-unsigned.dmg` dall'ultima release e trascina Beepbar in Applicazioni.
-2. Al primo avvio, fai clic destro su Beepbar e scegli **Apri**. Se macOS la blocca, vai in **Impostazioni di Sistema > Privacy e Sicurezza** e scegli **Apri comunque**.
-3. Apri Beepbar dalla menu bar, accedi a WeBeep nel browser e scegli la cartella locale da sincronizzare.
+1. Download `Beepbar-unsigned.dmg` from the latest release and drag Beepbar into Applications.
+2. On first launch, right-click Beepbar and choose **Open**. If macOS blocks it, go to **System Settings > Privacy & Security** and choose **Open Anyway**.
+3. Open Beepbar from the menu bar, sign in to WeBeep in the browser, and choose the local sync folder.
 
-Il DMG è arm64 ma al momento non è firmato né notarizzato, quindi il passaggio iniziale di Gatekeeper è previsto. Per utenti esperti, dopo aver spostato l'app in Applicazioni, è disponibile anche:
+The arm64 DMG is currently unsigned and not notarized, so the initial Gatekeeper step is expected. Advanced users can instead run this after moving the app into Applications:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Beepbar.app
@@ -45,6 +45,6 @@ xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release bui
 scripts/create-dmg.sh build/Release/Beepbar.app build/Beepbar-unsigned.dmg
 ```
 
-La CI esegue i test e crea un DMG arm64 non firmato.
+CI runs the tests and builds an unsigned arm64 DMG.
 
-Beepbar non e affiliata a Politecnico di Milano o WeBeep.
+Beepbar is not affiliated with Politecnico di Milano or WeBeep.
