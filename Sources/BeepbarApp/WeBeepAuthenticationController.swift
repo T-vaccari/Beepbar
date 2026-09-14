@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import Security
 import SwiftUI
-import UserNotifications
+@preconcurrency import UserNotifications
 import WebKit
 import BeepbarCore
 
