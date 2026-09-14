@@ -15,9 +15,24 @@ public enum LocalPathPolicy {
         return component(courseName)
     }
 
+    public static func generatedCourseFolderReplacement(
+        storedFolder: String,
+        storedCourseName: String,
+        currentCourseName: String,
+        courseID: Int64
+    ) -> String? {
+        let currentDefault = defaultCourseFolder(currentCourseName)
+        guard !equivalent(storedFolder, currentDefault) else { return nil }
+        let storedDefault = defaultCourseFolder(storedCourseName)
+        let legacyDefaults = [storedDefault, "\(storedDefault) (\(courseID))"]
+        let decodedStoredFolder = MoodleText.normalized(storedFolder).map(component)
+        guard legacyDefaults.contains(where: { equivalent(storedFolder, $0) })
+                || decodedStoredFolder.map({ equivalent($0, currentDefault) }) == true else { return nil }
+        return currentDefault
+    }
+
     public static func destination(courseFolder: String, file: RemoteFileCandidate) throws -> RelativePath {
         let course = component(courseFolder)
-        let section = component(file.sectionName)
         let module = component(file.moduleName)
         let remotePath = try file.remoteFilePath.split(separator: "/", omittingEmptySubsequences: true)
             .map { try validRemoteComponent(String($0)) }
@@ -26,8 +41,21 @@ public enum LocalPathPolicy {
             let resourceName = ext.isEmpty ? module : "\(module).\(component(ext))"
             return try RelativePath([course, resourceName].joined(separator: "/"))
         }
-        let prefix = file.sectionName.localizedCaseInsensitiveContains("material") ? [course] : [course, section]
+        let sectionName = file.sectionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = sectionName.isEmpty || sectionName.localizedCaseInsensitiveContains("material")
+            ? [course]
+            : [course, component(sectionName)]
         return try RelativePath((prefix + [module] + remotePath + [component(file.filename)]).joined(separator: "/"))
+    }
+
+    public static func uniqueDestination(_ destination: RelativePath, reserving paths: inout Set<String>) throws -> RelativePath {
+        var candidate = destination
+        var suffix = 1
+        while !paths.insert(normalized(candidate)).inserted {
+            candidate = try destinationByAddingSuffix(suffix, to: destination)
+            suffix += 1
+        }
+        return candidate
     }
 
     public static func component(_ input: String) -> String {
@@ -50,6 +78,26 @@ public enum LocalPathPolicy {
             throw LocalPathPolicyError.invalidRemotePath
         }
         return component(input)
+    }
+
+    private static func normalized(_ path: RelativePath) -> String {
+        path.value.precomposedStringWithCanonicalMapping.lowercased()
+    }
+
+    private static func equivalent(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.precomposedStringWithCanonicalMapping.localizedCaseInsensitiveCompare(
+            rhs.precomposedStringWithCanonicalMapping
+        ) == .orderedSame
+    }
+
+    private static func destinationByAddingSuffix(_ suffix: Int, to path: RelativePath) throws -> RelativePath {
+        let value = path.value as NSString
+        let directory = value.deletingLastPathComponent
+        let filename = value.lastPathComponent as NSString
+        let ext = filename.pathExtension
+        let stem = filename.deletingPathExtension
+        let renamed = ext.isEmpty ? "\(stem) (\(suffix))" : "\(stem) (\(suffix)).\(ext)"
+        return try RelativePath(directory.isEmpty ? renamed : "\(directory)/\(renamed)")
     }
 
     private static func limited(_ value: String) -> String {

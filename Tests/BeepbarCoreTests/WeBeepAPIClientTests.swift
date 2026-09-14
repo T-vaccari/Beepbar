@@ -49,6 +49,25 @@ import Testing
         #expect(courses == [RemoteCourseSummary(id: 9, shortName: "HPC", displayName: "High Performance Computing", isVisible: true, startDate: Date(timeIntervalSince1970: 0), endDate: nil)])
     }
 
+    @Test func decodesHTMLEntitiesInCourseNames() async throws {
+        let session = testSession { _ in
+            response(status: 200, body: #"[{"id":9,"shortname":"GPUS &amp; HETEROGENEOUS SYSTEMS","fullname":"GPUS &amp; HETEROGENEOUS SYSTEMS","visible":1}]"#)
+        }
+        let courses = try await WeBeepAPIClient(session: session).fetchCourses(userID: 7, token: "token")
+        #expect(courses.first?.shortName == "GPUS & HETEROGENEOUS SYSTEMS")
+        #expect(courses.first?.displayName == "GPUS & HETEROGENEOUS SYSTEMS")
+    }
+
+    @Test func decodesRepeatedHTMLEntitiesInCourseNames() async throws {
+        let session = testSession { _ in
+            response(status: 200, body: #"[{"id":9,"shortname":"GPUS &amp;amp; HETEROGENEOUS SYSTEMS","fullname":"GPUS &amp;amp; HETEROGENEOUS SYSTEMS","visible":1}]"#)
+        }
+        let courses = try await WeBeepAPIClient(session: session).fetchCourses(userID: 1, token: "token")
+
+        #expect(courses.first?.displayName == "GPUS & HETEROGENEOUS SYSTEMS")
+        #expect(courses.first?.shortName == "GPUS & HETEROGENEOUS SYSTEMS")
+    }
+
     @Test(arguments: [
         #"[{"id":0,"shortname":"HPC"}]"#,
         #"[{"id":9,"shortname":"HPC"},{"id":9,"shortname":"Other"}]"#,
@@ -82,6 +101,18 @@ import Testing
         let contents = try await WeBeepAPIClient(session: session).fetchContents(courseID: 9, token: "token")
         #expect(contents.issueCount == 0)
         #expect(contents.sections[0].modules[0].files[0].isSupported)
+    }
+
+    @Test func normalizesMoodleSectionAndModuleNames() async throws {
+        let session = testSession { _ in
+            response(status: 200, body: #"[{"id":1,"name":"","modules":[{"id":4,"name":"{mlang en}LECTURES{mlang}","modname":"folder","contents":[{"type":"file","filename":"intro.pdf","filepath":"/","filesize":42,"timemodified":1,"fileurl":"https://webeep.polimi.it/webservice/pluginfile.php/1/a.pdf"}]}]}]"#)
+        }
+        let contents = try await WeBeepAPIClient(session: session).fetchContents(courseID: 9, token: "token")
+
+        #expect(contents.sections[0].name.isEmpty)
+        #expect(contents.sections[0].modules[0].name == "LECTURES")
+        #expect(contents.sections[0].modules[0].files[0].sectionName.isEmpty)
+        #expect(contents.sections[0].modules[0].files[0].moduleName == "LECTURES")
     }
 
     @Test func marksSuspiciousFileURLsUnsupported() async throws {

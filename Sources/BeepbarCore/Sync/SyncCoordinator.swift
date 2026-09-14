@@ -105,10 +105,19 @@ public actor SyncCoordinator {
                 if next < targets.count { enqueue(next); next += 1 }
             }
             var items: [PreparedSyncItem] = []
+            var reservedPaths = Set(baselines.values.map {
+                $0.relativePath.value.precomposedStringWithCanonicalMapping.lowercased()
+            })
             for (index, files) in fetched.sorted(by: { $0.0 < $1.0 }) {
                 for file in files {
                     try Task.checkCancellation()
-                    let destination = try baselines[file.id]?.relativePath ?? LocalPathPolicy.destination(courseFolder: targets[index].localFolder, file: file)
+                    let destination: RelativePath
+                    if let baseline = baselines[file.id] {
+                        destination = baseline.relativePath
+                    } else {
+                        let preferred = try LocalPathPolicy.destination(courseFolder: targets[index].localFolder, file: file)
+                        destination = try LocalPathPolicy.uniqueDestination(preferred, reserving: &reservedPaths)
+                    }
                     items.append(PreparedSyncItem(remote: file, destination: destination))
                 }
             }

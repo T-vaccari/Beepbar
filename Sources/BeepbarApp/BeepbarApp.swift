@@ -32,6 +32,8 @@ private struct MenuBarContent: View {
                 ConflictWindowController.shared.show(authentication)
             } else if authentication.accountState != .connected {
                 authentication.startLogin()
+            } else if authentication.rootURL == nil {
+                ConfigurationWindowController.shared.show(authentication)
             } else {
                 authentication.synchronizeNow()
             }

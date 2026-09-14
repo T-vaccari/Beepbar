@@ -112,6 +112,7 @@ private struct HomePage: View {
                         Text("Ogni ora").tag(3600)
                         Text("Ogni 2 ore").tag(7200)
                         Text("Ogni 4 ore").tag(14400)
+                        Text("Una volta al giorno").tag(86400)
                     }
                     .labelsHidden()
                     .frame(width: 145)
@@ -190,7 +191,9 @@ private struct HomePage: View {
                                 }
                             }
                             .disabled(authentication.renamingCourseID == course.id)
+                            Spacer(minLength: 0)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         if course.id != authentication.courses.last?.id { Divider() }
                     }
                     }
@@ -273,8 +276,13 @@ private struct SettingsPage: View {
                             Text("1 ora").tag(3600)
                             Text("2 ore").tag(7200)
                             Text("4 ore").tag(14400)
+                            Text("Una volta al giorno").tag(86400)
                         }.disabled(!authentication.automaticSyncEnabled)
-        Text("Tutti i corsi selezionati vengono controllati. Conflitti e modifiche locali non vengono mai sovrascritti automaticamente.")
+                        if authentication.automaticSyncInterval == 86_400 {
+                            DatePicker("Orario del controllo", selection: Binding(get: { authentication.automaticDailyCheckTime }, set: { authentication.setAutomaticDailyCheckTime($0) }), displayedComponents: .hourAndMinute)
+                                .disabled(!authentication.automaticSyncEnabled)
+                        }
+                        Text("Tutti i corsi selezionati vengono controllati. Conflitti e modifiche locali non vengono mai sovrascritti automaticamente.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(4)
                 }
