@@ -71,6 +71,40 @@ import Testing
         #expect(try Data(contentsOf: destination) == Data("changed".utf8))
     }
 
+    @Test func recreatesDeletedCourseDirectoryAndReinstallsFiles() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        _ = try await fixture.synchronize(targets: [target])
+        let baseline = try #require(await fixture.database.baseline(rootID: fixture.rootID, remoteID: fixture.remoteID(course: 1, file: 0)))
+
+        try FileManager.default.removeItem(at: fixture.root.appending(path: target.localFolder))
+        let restored = try await fixture.synchronize(targets: [target])
+
+        #expect(restored.installed == 100)
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: baseline.relativePath.value).path))
+    }
+
+    @Test func missingBaselineFileKeepsItsTrackedDestination() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let remoteID = fixture.remoteID(course: 1, file: 0)
+        let destination = try RelativePath("Course 1/original.txt")
+        try await fixture.database.upsertBaseline(rootID: fixture.rootID, baseline: Baseline(
+            remoteID: remoteID,
+            relativePath: destination,
+            sha256: String(repeating: "0", count: 64),
+            remoteRevision: "0"
+        ))
+
+        let result = try await fixture.synchronize(targets: [fixture.targets[0]])
+        let baseline = try #require(await fixture.database.baseline(rootID: fixture.rootID, remoteID: remoteID))
+
+        #expect(result.installed == 100)
+        #expect(baseline.relativePath == destination)
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: destination.value).path))
+    }
+
     @Test func cancellationLeavesNoBaselineOrStagingArtifacts() async throws {
         let fixture = try await Fixture()
         defer { fixture.remove() }

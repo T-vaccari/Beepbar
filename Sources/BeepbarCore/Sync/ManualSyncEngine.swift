@@ -55,7 +55,10 @@ public actor ManualSyncEngine {
         guard file.isSupported else { return .skipped(file.ineligibilityReason ?? "materiale non supportato") }
         guard !(try await database.hasOpenConflict(rootID: rootID, remoteID: file.id, revision: file.observedRevision)) else { return .skipped("conflitto già aperto") }
         let baseline = try await database.baseline(rootID: rootID, remoteID: file.id)
-        guard baseline?.relativePath == nil || baseline?.relativePath == destination else { throw SyncDatabaseError.execution }
+        if let oldPath = baseline?.relativePath, oldPath != destination,
+           try await fileStore.containsRegularFile(oldPath) {
+            throw SyncDatabaseError.execution
+        }
         let local = try await fileStore.inspect(destination)
         if let baseline, baseline.remoteRevision == file.observedRevision, case .present = local {
             return try await apply(SyncPlanner.decide(baseline: baseline, local: local, remote: RemoteState(sha256: baseline.sha256, revision: file.observedRevision)), remoteID: file.id, baseline: baseline, destination: destination, local: local, remote: RemoteState(sha256: baseline.sha256, revision: file.observedRevision), artifact: nil)

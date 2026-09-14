@@ -23,7 +23,7 @@ enum AppSyncState: Equatable {
         switch self {
         case .starting: "Avvio"
         case .loginRequired: "Accedi a WeBeep"
-        case .needsFolder: "Scegli una cartella"
+        case .needsFolder: "Apri Impostazioni"
         case .readyUnchecked: "Pronto"
         case .checking: "Controllo aggiornamenti"
         case .syncing: "Sincronizzazione in corso"
@@ -39,7 +39,7 @@ enum AppSyncState: Equatable {
         switch self {
         case .starting: "Preparazione dello stato locale…"
         case .loginRequired: "Collega il tuo account per iniziare."
-        case .needsFolder: "Scegli dove salvare i materiali."
+        case .needsFolder: "Scegli la cartella dei materiali nelle Impostazioni."
         case .readyUnchecked: "Controlla gli aggiornamenti quando vuoi."
         case .checking: "Verifica delle modifiche remote in corso…"
         case .syncing: "I file locali non vengono mai sovrascritti senza una scelta."
@@ -92,6 +92,7 @@ enum AccountState: Equatable {
     @Published private(set) var enabledCourseIDs: Set<Int64>
     @Published private(set) var automaticSyncEnabled: Bool
     @Published private(set) var automaticSyncInterval: Int
+    @Published private(set) var automaticDailyCheckTime: Date
     @Published private(set) var recoveryBlocked = false
     @Published private(set) var courseFolders: [Int64: String] = [:]
     @Published private(set) var courseRenameErrors: [Int64: String] = [:]
@@ -119,6 +120,7 @@ enum AccountState: Equatable {
         enabledCourseIDs = Set(UserDefaults.standard.stringArray(forKey: Self.enabledCoursesKey)?.compactMap(Int64.init) ?? [])
         automaticSyncEnabled = UserDefaults.standard.bool(forKey: Self.autoSyncKey)
         automaticSyncInterval = Self.validatedAutomaticInterval(UserDefaults.standard.object(forKey: Self.autoSyncIntervalKey) as? Int)
+        automaticDailyCheckTime = Self.dailyTime(UserDefaults.standard.object(forKey: Self.autoSyncDailyTimeKey) as? Int)
         rootID = Self.storedRootID()
         apiClient = WeBeepAPIClient()
         database = nil
@@ -174,6 +176,7 @@ enum AccountState: Equatable {
         if case .cancelling = syncState { return "Annulla sincronizzazione" }
         if case .conflicts = syncState { return "Apri conflitti" }
         if case .loginRequired = syncState { return "Accedi" }
+        if case .needsFolder = syncState { return "Apri Impostazioni" }
         if case .failed = syncState, accountState == .expired { return "Accedi di nuovo" }
         return "Sincronizza ora"
     }
@@ -270,6 +273,12 @@ enum AccountState: Equatable {
         configureBackgroundScheduler()
     }
     func setAutomaticSyncInterval(_ seconds: Int) { guard !isSyncActive else { return }; automaticSyncInterval = Self.validatedAutomaticInterval(seconds); UserDefaults.standard.set(automaticSyncInterval, forKey: Self.autoSyncIntervalKey); configureBackgroundScheduler() }
+    func setAutomaticDailyCheckTime(_ time: Date) {
+        guard !isSyncActive else { return }
+        automaticDailyCheckTime = Self.dailyTime(Self.secondsSinceMidnight(time))
+        UserDefaults.standard.set(Self.secondsSinceMidnight(automaticDailyCheckTime), forKey: Self.autoSyncDailyTimeKey)
+        configureBackgroundScheduler()
+    }
 
     func renameFolder(for course: RemoteCourseSummary, to newFolder: String) {
         guard let rootURL, let rootID, let database, !recoveryBlocked, !isSyncActive else { return }
@@ -449,13 +458,32 @@ enum AccountState: Equatable {
     private static let enabledCoursesKey = "io.github.tvaccari.beepbar.enabled-courses.v1"
     private static let autoSyncKey = "io.github.tvaccari.beepbar.auto-sync.v1"
     private static let autoSyncIntervalKey = "io.github.tvaccari.beepbar.auto-sync-interval.v1"
+    private static let autoSyncDailyTimeKey = "io.github.tvaccari.beepbar.auto-sync-daily-time.v1"
     private static let lastSuccessfulReconciliationKey = "io.github.tvaccari.beepbar.last-successful-reconciliation.v1."
 
-    private static let automaticIntervals: Set<Int> = [1_800, 3_600, 7_200, 14_400]
+    private static let automaticIntervals: Set<Int> = [1_800, 3_600, 7_200, 14_400, 86_400]
 
     private static func validatedAutomaticInterval(_ value: Int?) -> Int {
         guard let value, automaticIntervals.contains(value) else { return 3_600 }
         return value
+    }
+
+    private static func dailyTime(_ seconds: Int?) -> Date {
+        let valid = min(max(seconds ?? 9 * 3_600, 0), 86_399)
+        return Calendar.current.startOfDay(for: Date()).addingTimeInterval(TimeInterval(valid))
+    }
+
+    private static func secondsSinceMidnight(_ date: Date) -> Int {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (components.hour ?? 0) * 3_600 + (components.minute ?? 0) * 60
+    }
+
+    private static func secondsUntilNextDailyCheck(_ time: Date, now: Date = Date()) -> TimeInterval {
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.hour, .minute], from: time)
+        let today = calendar.date(bySettingHour: components.hour ?? 0, minute: components.minute ?? 0, second: 0, of: now) ?? now
+        let next = today > now ? today : calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        return max(next.timeIntervalSince(now), 60)
     }
 
     private static func storedRootURL() -> URL? {
@@ -572,7 +600,41 @@ enum AccountState: Equatable {
         enabledCourseIDs = Set(scopes.lazy.filter { $0.enabled && remoteIDs.contains($0.courseID) }.map(\.courseID))
         for course in courses {
             if let scope = scopesByCourse[course.id], !scope.localFolder.isEmpty {
-                courseFolders[course.id] = scope.localFolder
+                let replacement = LocalPathPolicy.generatedCourseFolderReplacement(
+                    storedFolder: scope.localFolder,
+                    storedCourseName: scope.displayName,
+                    currentCourseName: course.displayName,
+                    courseID: course.id
+                )
+                if let replacement, let rootURL {
+                    do {
+                        let renamer = CourseFolderRenamer(database: database, fileStore: try FileStore(root: rootURL), gate: operationGate)
+                        try await renamer.rename(rootID: rootID, courseID: course.id, from: scope.localFolder, to: replacement)
+                        courseFolders[course.id] = replacement
+                        try await database.upsertScope(SyncScope(
+                            rootID: rootID,
+                            courseID: course.id,
+                            displayName: course.displayName,
+                            localFolder: replacement,
+                            enabled: scope.enabled,
+                            managedDirectory: scope.managedDirectory
+                        ))
+                    } catch {
+                        courseFolders[course.id] = scope.localFolder
+                    }
+                } else {
+                    courseFolders[course.id] = scope.localFolder
+                    if scope.displayName != course.displayName {
+                        try? await database.upsertScope(SyncScope(
+                            rootID: rootID,
+                            courseID: course.id,
+                            displayName: course.displayName,
+                            localFolder: scope.localFolder,
+                            enabled: scope.enabled,
+                            managedDirectory: scope.managedDirectory
+                        ))
+                    }
+                }
             } else {
                 courseFolders[course.id] = defaults[course.id] ?? LocalPathPolicy.defaultCourseFolder(course.displayName)
             }
@@ -592,7 +654,8 @@ enum AccountState: Equatable {
         let names = Dictionary(grouping: courses, by: { LocalPathPolicy.defaultCourseFolder($0.displayName).precomposedStringWithCanonicalMapping.lowercased() })
         return Dictionary(uniqueKeysWithValues: courses.map { course in
             let base = LocalPathPolicy.defaultCourseFolder(course.displayName)
-            return (course.id, (names[base.precomposedStringWithCanonicalMapping.lowercased()]?.count ?? 0) > 1 ? "\(base) (\(course.id))" : base)
+            let duplicate = (names[base.precomposedStringWithCanonicalMapping.lowercased()]?.count ?? 0) > 1
+            return (course.id, duplicate ? LocalPathPolicy.component(course.displayName) : base)
         })
     }
 
@@ -613,6 +676,7 @@ enum AccountState: Equatable {
         let configuration = BackgroundScheduleConfiguration(
             enabled: automaticSyncEnabled,
             interval: automaticSyncInterval,
+            dailyTime: Self.secondsSinceMidnight(automaticDailyCheckTime),
             connected: accountState == .connected,
             rootConfigured: rootURL != nil,
             enabledCourseCount: enabledCourseIDs.count,
@@ -631,9 +695,10 @@ enum AccountState: Equatable {
         )
         guard BackgroundSchedulePolicy.shouldSchedule(policy) else { return }
         let scheduler = NSBackgroundActivityScheduler(identifier: "io.github.tvaccari.beepbar.auto-sync")
-        scheduler.repeats = true
-        scheduler.interval = TimeInterval(automaticSyncInterval)
-        scheduler.tolerance = TimeInterval(automaticSyncInterval) * 0.5
+        let isDaily = automaticSyncInterval == 86_400
+        scheduler.repeats = !isDaily
+        scheduler.interval = isDaily ? Self.secondsUntilNextDailyCheck(automaticDailyCheckTime) : TimeInterval(automaticSyncInterval)
+        scheduler.tolerance = isDaily ? 3_600 : TimeInterval(automaticSyncInterval) * 0.5
         scheduler.qualityOfService = .utility
         scheduler.schedule { [weak self] completion in
             Task { @MainActor [weak self] in
@@ -641,6 +706,12 @@ enum AccountState: Equatable {
                 defer { PerformanceTrace.shared.end("scheduler.callback", category: .scheduler, state: trace) }
                 let outcome = await self?.runAutomaticSync() ?? .finished
                 completion(outcome.schedulerResult)
+                if self?.automaticSyncInterval == 86_400 {
+                    self?.backgroundScheduler?.invalidate()
+                    self?.backgroundScheduler = nil
+                    self?.scheduledConfiguration = nil
+                    self?.configureBackgroundScheduler()
+                }
             }
         }
         backgroundScheduler = scheduler
@@ -764,6 +835,7 @@ enum AccountState: Equatable {
 private struct BackgroundScheduleConfiguration: Equatable {
     let enabled: Bool
     let interval: Int
+    let dailyTime: Int
     let connected: Bool
     let rootConfigured: Bool
     let enabledCourseCount: Int

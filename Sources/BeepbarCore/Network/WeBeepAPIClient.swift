@@ -165,8 +165,10 @@ public final class WeBeepAPIClient: @unchecked Sendable {
         var identifiers = Set<Int64>()
         return try decoded.map { course in
             guard course.id > 0, identifiers.insert(course.id).inserted,
-                  let name = [course.displayname, course.fullname, course.shortname].compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) }).first(where: { !$0.isEmpty && $0.utf8.count <= 512 }),
-                  let shortName = course.shortname?.trimmingCharacters(in: .whitespacesAndNewlines), !shortName.isEmpty, shortName.utf8.count <= 512 else {
+                  let name = [course.displayname, course.fullname, course.shortname]
+                    .compactMap(MoodleText.normalized)
+                    .first(where: { !$0.isEmpty && $0.utf8.count <= 512 }),
+                  let shortName = MoodleText.normalized(course.shortname), !shortName.isEmpty, shortName.utf8.count <= 512 else {
                 throw WeBeepAPIError.malformedPayload
             }
             return RemoteCourseSummary(id: course.id, shortName: shortName, displayName: name, isVisible: course.visible.map { $0 != 0 }, startDate: course.startdate.map(Date.init(timeIntervalSince1970:)), endDate: course.enddate.map(Date.init(timeIntervalSince1970:)))
@@ -187,8 +189,9 @@ public final class WeBeepAPIClient: @unchecked Sendable {
         var identityCounts: [String: Int] = [:]
         let mapped = sections.compactMap { section -> RemoteContentSection? in
             guard section.id > 0 else { issueCount += 1; return nil }
+            let sectionName = MoodleText.normalized(section.name) ?? ""
             let modules = (section.modules ?? []).compactMap { module -> RemoteContentModule? in
-                guard module.id > 0, let name = bounded(module.name) else { issueCount += 1; return nil }
+                guard module.id > 0, let name = MoodleText.normalized(module.name) else { issueCount += 1; return nil }
                 if let modname = module.modname?.lowercased(), ["forum", "url", "page", "label", "choice", "feedback", "lesson", "wooclap"].contains(modname) {
                     issueCount += (module.contents ?? []).count
                     return nil
@@ -210,7 +213,7 @@ public final class WeBeepAPIClient: @unchecked Sendable {
                     let revision = validContentHash(content.contenthash) ?? "\(Int64(content.timemodified!)):\(content.filesize!)"
                     return RemoteFileCandidate(
                         id: identity, courseID: courseID, sectionID: section.id, moduleID: module.id,
-                        sectionName: bounded(section.name) ?? "Senza titolo", moduleName: name,
+                        sectionName: sectionName, moduleName: name,
                         moduleType: module.modname?.lowercased() ?? "unknown", isSingleFileResource: isSingleFileResource,
                         filename: filename, remoteFilePath: remoteFilePath, canonicalPluginPath: canonicalPath,
                         downloadURL: reason == nil ? url : nil, size: content.filesize!,
@@ -220,7 +223,7 @@ public final class WeBeepAPIClient: @unchecked Sendable {
                 }
                 return RemoteContentModule(id: module.id, name: name, files: files)
             }
-            return RemoteContentSection(id: section.id, name: bounded(section.name) ?? "Senza titolo", modules: modules)
+            return RemoteContentSection(id: section.id, name: sectionName, modules: modules)
         }
         let duplicateIDs = Set(identityCounts.compactMap { $0.value > 1 ? $0.key : nil })
         if !duplicateIDs.isEmpty { issueCount += duplicateIDs.count }
@@ -291,6 +294,82 @@ public final class WeBeepAPIClient: @unchecked Sendable {
 private func bounded(_ value: String?) -> String? {
     guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty, value.utf8.count <= 512 else { return nil }
     return value
+}
+
+public enum MoodleText {
+    public static func normalized(_ value: String?) -> String? {
+        guard let value = bounded(value) else { return nil }
+        let decoded = decodedHTMLEntities(value)
+        let pattern = #"\{mlang\s+([^}]+)\}([\s\S]*?)\{mlang\}"#
+        guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return bounded(decoded)
+        }
+        let range = NSRange(decoded.startIndex..., in: decoded)
+        let matches = expression.matches(in: decoded, range: range)
+        guard !matches.isEmpty else { return bounded(decoded) }
+        let language = Locale.current.language.languageCode?.identifier.lowercased()
+        let candidates = matches.compactMap { match -> (String, String)? in
+            guard let languageRange = Range(match.range(at: 1), in: decoded),
+                  let textRange = Range(match.range(at: 2), in: decoded) else { return nil }
+            return (String(decoded[languageRange]).lowercased(), String(decoded[textRange]))
+        }
+        let selected = candidates.first { language != nil && $0.0.split(separator: ",").map(String.init).contains(language!) }
+            ?? candidates.first { $0.0.split(separator: ",").map(String.init).contains("en") }
+            ?? candidates.first
+        return bounded(selected?.1)
+    }
+}
+
+private func decodedHTMLEntities(_ value: String) -> String {
+    var decoded = value
+    for _ in 0..<3 {
+        let next = decodedHTMLEntitiesOnce(decoded)
+        guard next != decoded else { break }
+        decoded = next
+    }
+    return decoded
+}
+
+private func decodedHTMLEntitiesOnce(_ value: String) -> String {
+    guard value.contains("&") else { return value }
+    var result = ""
+    var index = value.startIndex
+    while index < value.endIndex {
+        guard value[index] == "&", let end = value[index...].firstIndex(of: ";") else {
+            result.append(value[index])
+            index = value.index(after: index)
+            continue
+        }
+        let entity = String(value[value.index(after: index)..<end])
+        if let decoded = decodedHTMLEntity(entity) {
+            result.append(decoded)
+        } else {
+            result.append(contentsOf: value[index...end])
+        }
+        index = value.index(after: end)
+    }
+    return result
+}
+
+private func decodedHTMLEntity(_ entity: String) -> Character? {
+    switch entity {
+    case "amp": return "&"
+    case "lt": return "<"
+    case "gt": return ">"
+    case "quot": return "\""
+    case "apos", "#39": return "'"
+    case "nbsp": return " "
+    default:
+        let scalar: UInt32?
+        if entity.hasPrefix("#x") || entity.hasPrefix("#X") {
+            scalar = UInt32(entity.dropFirst(2), radix: 16)
+        } else if entity.hasPrefix("#") {
+            scalar = UInt32(entity.dropFirst())
+        } else {
+            scalar = nil
+        }
+        return scalar.flatMap(UnicodeScalar.init).map(Character.init)
+    }
 }
 
 private func canonicalPluginPath(_ url: URL, policy: WeBeepServerPolicy) -> String? {
