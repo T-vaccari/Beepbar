@@ -834,7 +834,7 @@ private actor BootstrapService {
     }
 }
 
-private actor SyncNotificationCoordinator {
+@MainActor private final class SyncNotificationCoordinator {
     private var lastErrorSignature: String?
 
     func requestAuthorizationIfNeeded() async {
