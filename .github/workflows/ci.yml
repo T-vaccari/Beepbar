@@ -29,9 +29,9 @@ jobs:
       - name: Verify app
         run: file build/Release/Beepbar.app/Contents/MacOS/Beepbar | grep -q 'arm64'
       - name: Create unsigned DMG
-        run: scripts/create-dmg.sh build/Release/Beepbar.app build/Beepbar-unsigned.dmg
+        run: scripts/create-dmg.sh build/Release/Beepbar.app build/Beepbar.dmg
       - uses: actions/upload-artifact@v4
         with:
-          name: Beepbar-unsigned-dmg
-          path: build/Beepbar-unsigned.dmg
+          name: Beepbar-dmg
+          path: build/Beepbar.dmg
           if-no-files-found: error
