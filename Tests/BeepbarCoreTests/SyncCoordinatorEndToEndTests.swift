@@ -139,6 +139,24 @@ import Testing
         #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: destination.value).path))
     }
 
+    @Test func ghostBaselineWithNoLocalFileDoesNotStealAFreshFilesName() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let ghostDestination = try RelativePath("Course 1/Lezioni/0.txt")
+        try await fixture.database.upsertBaseline(rootID: fixture.rootID, baseline: Baseline(
+            remoteID: "1:100:/webservice/pluginfile.php/1/ghost.txt",
+            relativePath: ghostDestination,
+            sha256: String(repeating: "0", count: 64),
+            remoteRevision: "0"
+        ))
+
+        let result = try await fixture.synchronize(targets: [fixture.targets[0]])
+
+        #expect(result.installed == 100)
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: ghostDestination.value).path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lezioni/0 (1).txt").path))
+    }
+
     @Test func changedLocalAndRemoteFileConflictsAtTrackedLegacyDestination() async throws {
         let fixture = try await Fixture()
         defer { fixture.remove() }
