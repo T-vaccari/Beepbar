@@ -22,6 +22,8 @@ jobs:
     name: Release DMG
     runs-on: macos-15
     needs: test
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Build arm64 Release app
@@ -38,3 +40,13 @@ jobs:
           name: Beepbar-dmg
           path: build/Beepbar.dmg
           if-no-files-found: error
+      - name: Publish latest release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build
+          body: Automatically updated on every push to main. Reflects commit ${{ github.sha }}.
+          prerelease: true
+          make_latest: true
+          files: build/Beepbar.dmg

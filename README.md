@@ -1,14 +1,14 @@
 # Beepbar
 
 [![CI](https://github.com/T-vaccari/Beepbar/actions/workflows/ci.yml/badge.svg)](https://github.com/T-vaccari/Beepbar/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/T-vaccari/Beepbar?include_prereleases&label=release)](https://github.com/T-vaccari/Beepbar/releases/tag/v0.1.0-beta.1)
+[![Latest release](https://img.shields.io/github/v/release/T-vaccari/Beepbar?include_prereleases&label=release)](https://github.com/T-vaccari/Beepbar/releases/tag/latest)
 [![Downloads](https://img.shields.io/github/downloads/T-vaccari/Beepbar/total)](https://github.com/T-vaccari/Beepbar/releases)
 
 A native macOS app for syncing WeBeep materials locally. Beepbar is built specifically for Apple Silicon, stays lightweight in the background, and protects local changes instead of blindly replacing them with remote files.
 
 ## TL;DR / Install
 
-1. [Download Beepbar.dmg](https://github.com/T-vaccari/Beepbar/releases/download/v0.1.0-beta.1/Beepbar.dmg), double-click it, then drag Beepbar into Applications.
+1. [Download Beepbar.dmg](https://github.com/T-vaccari/Beepbar/releases/download/latest/Beepbar.dmg), double-click it, then drag Beepbar into Applications. This link always points to the build from the latest commit on `main`.
 2. On first launch, right-click Beepbar and choose **Open**. If macOS blocks it, go to **System Settings > Privacy & Security** and choose **Open Anyway**.
 3. Open Beepbar from the menu bar, sign in to WeBeep in the browser, and choose the local sync folder.
 
