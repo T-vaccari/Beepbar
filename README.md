@@ -54,4 +54,8 @@ CI runs the tests and builds an ad-hoc-signed arm64 DMG.
 
 Found a bug or have a feature request? [Open an issue](https://github.com/T-vaccari/Beepbar/issues). Pull requests are welcome too.
 
+## License
+
+[MIT](LICENSE)
+
 Beepbar is not affiliated with Politecnico di Milano or WeBeep.
