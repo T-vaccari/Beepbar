@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Generated and overwritten automatically by CI on every push to main that touches production code. Do not edit by hand. -->
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
-  <channel>
-    <title>Beepbar</title>
-  </channel>
-</rss>

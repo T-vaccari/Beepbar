@@ -34,7 +34,7 @@
 		</dict>
 	</array>
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/T-vaccari/Beepbar/main/appcast.xml</string>
+	<string>https://github.com/T-vaccari/Beepbar/releases/download/latest/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>MuhLUDcKP0PlrwcTowmYFg4oouSn9FVcfs2L19x0X7E=</string>
 	<key>SUEnableAutomaticChecks</key>
