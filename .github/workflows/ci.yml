@@ -73,7 +73,10 @@ jobs:
         with:
           tag_name: latest
           name: Latest build
-          body: Automatically updated on every push to main. Reflects commit ${{ github.sha }}.
+          body: |
+            The most recent `Beepbar.dmg` built from `main` — this link always points to the newest code, so it updates automatically on every push.
+
+            Built from commit [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}). Ad-hoc signed, not notarized — see the [README](https://github.com/${{ github.repository }}#tldr--install) for the first-launch Gatekeeper step.
           prerelease: true
           make_latest: true
           files: build/Beepbar.dmg
