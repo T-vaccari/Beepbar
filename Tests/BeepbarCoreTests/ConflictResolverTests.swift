@@ -15,7 +15,7 @@ struct ConflictResolverTests {
     @Test func usesRemoteOnlyWhenLocalIsUnchanged() async throws {
         let fixture = try await conflictFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        #expect(try await fixture.resolver.useRemote(id: fixture.conflict.id) == .installed)
+        #expect(try await fixture.resolver.useRemote(id: fixture.conflict.id) == .installedReplacing)
         #expect(try String(contentsOf: fixture.destination, encoding: .utf8) == "remote")
         #expect(try await fixture.database.conflicts(rootID: fixture.rootID).isEmpty)
     }

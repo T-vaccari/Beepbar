@@ -5,7 +5,7 @@ struct BeepbarShellView: View {
     @ObservedObject var authentication: WeBeepAuthenticationController
     @State private var page: Page = .home
 
-    enum Page { case home, settings, conflicts }
+    enum Page { case home, settings, conflicts, syncDetail }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,6 +16,7 @@ struct BeepbarShellView: View {
                 case .home: HomePage(authentication: authentication, open: open)
                 case .settings: SettingsPage(authentication: authentication, back: { page = .home })
                 case .conflicts: ConflictsPage(authentication: authentication, back: { page = .home })
+                case .syncDetail: SyncDetailPage(authentication: authentication, back: { page = .home })
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -30,7 +31,7 @@ struct BeepbarShellView: View {
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Beepbar").font(.title3.weight(.semibold))
-                Text(page == .home ? "Materiali WeBeep in locale" : page == .settings ? "Impostazioni" : "Risolutore conflitti")
+                Text(pageSubtitle)
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -57,6 +58,15 @@ struct BeepbarShellView: View {
     }
 
     private func open(_ destination: Page) { page = destination }
+
+    private var pageSubtitle: String {
+        switch page {
+        case .home: "Materiali WeBeep in locale"
+        case .settings: "Impostazioni"
+        case .conflicts: "Risolutore conflitti"
+        case .syncDetail: "Ultima sincronizzazione"
+        }
+    }
 }
 
 private struct HomePage: View {
@@ -66,13 +76,12 @@ private struct HomePage: View {
     @State private var proposedFolder = ""
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                syncCard
-                coursesCard
-            }
-            .padding(20)
+        VStack(alignment: .leading, spacing: 18) {
+            syncCard
+            coursesCard
+                .layoutPriority(1)
         }
+        .padding(20)
     }
 
     private var syncCard: some View {
@@ -85,8 +94,14 @@ private struct HomePage: View {
                         .foregroundStyle(statusColor)
                     Text(authentication.syncState.detail)
                         .font(.caption).foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .frame(maxWidth: 190, alignment: .leading)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 260, alignment: .leading)
+                    if authentication.lastSyncSummary?.hasDetail == true {
+                        Button("Dettaglio") { open(.syncDetail) }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                    }
                 }
                 Spacer()
                 if authentication.accountState == .connected {
@@ -118,7 +133,9 @@ private struct HomePage: View {
                     .frame(width: 145)
                     Text("Tutti i corsi selezionati vengono controllati in background.")
                         .font(.caption2).foregroundStyle(.secondary)
-                        .frame(width: 155, alignment: .trailing)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 190, alignment: .trailing)
                 }
             }
             .padding(4)
@@ -139,7 +156,7 @@ private struct HomePage: View {
                     ContentUnavailableView("Nessun corso caricato", systemImage: "books.vertical", description: Text("Collega WeBeep e aggiorna l’elenco dei corsi."))
                         .frame(height: 130)
                 } else {
-                    LazyVStack(spacing: 10) {
+                    List {
                     ForEach(authentication.courses) { course in
                         HStack {
                         Toggle("", isOn: Binding(get: { authentication.isCourseEnabled(course) }, set: { authentication.setCourse(course, enabled: $0) }))
@@ -194,9 +211,12 @@ private struct HomePage: View {
                             Spacer(minLength: 0)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        if course.id != authentication.courses.last?.id { Divider() }
+                        .padding(.vertical, 4)
                     }
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 160, maxHeight: .infinity)
                 }
             }
             .padding(4)
@@ -206,7 +226,7 @@ private struct HomePage: View {
     private var statusColor: Color {
         switch authentication.syncState {
         case .synced: .green
-        case .conflicts, .failed, .recoveryBlocked, .loginRequired, .needsFolder: .orange
+        case .conflicts, .partial, .failed, .recoveryBlocked, .loginRequired, .needsFolder: .orange
         default: .accentColor
         }
     }
@@ -340,6 +360,54 @@ private struct ConflictsPage: View {
                     }
                     .padding(.vertical, 3)
                 }
+            }
+        }
+        .padding(20)
+    }
+}
+
+private struct SyncDetailPage: View {
+    @ObservedObject var authentication: WeBeepAuthenticationController
+    let back: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack { Button("Indietro", systemImage: "chevron.left", action: back); Spacer() }
+            Text("Ultima sincronizzazione").font(.title2.weight(.semibold))
+            if let summary = authentication.lastSyncSummary {
+                Text(summary.completedAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption).foregroundStyle(.secondary)
+                if summary.affectedCourses.isEmpty {
+                    ZStack {
+                        VStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 38))
+                                .foregroundStyle(.secondary)
+                            Text("Nessun corso con nuovi materiali").font(.title3.weight(.semibold))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(summary.affectedCourses) { course in
+                        HStack {
+                            Text(course.courseFolder).font(.body.weight(.medium))
+                            Spacer()
+                            if course.added > 0 { Text(course.addedLabel).font(.caption).foregroundStyle(.secondary) }
+                            if course.updated > 0 { Text(course.updatedLabel).font(.caption).foregroundStyle(.secondary) }
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+            } else {
+                ZStack {
+                    VStack(spacing: 8) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 38))
+                            .foregroundStyle(.secondary)
+                        Text("Nessuna sincronizzazione recente").font(.title3.weight(.semibold))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .padding(20)

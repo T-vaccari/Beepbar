@@ -1,7 +1,8 @@
 import Foundation
 
 public enum ManualSyncOutcome: Sendable, Equatable {
-    case installed
+    case installedNew
+    case installedReplacing
     case preservedLocal
     case adoptedRemoteBaseline
     case conflict(ConflictRecord)
@@ -92,7 +93,8 @@ public actor ManualSyncEngine {
         case .installRemote:
             guard let artifact else { throw FileStoreError.invalidStage }
             switch try await transactions.install(rootID: rootID, remoteID: remoteID, destination: destination, expectedLocal: local, remote: remote, artifact: artifact) {
-            case .installed: return .installed
+            case .installedNew: return .installedNew
+            case .installedReplacing: return .installedReplacing
             case .conflict(let conflict): return .conflict(conflict)
             }
         case .conflict:

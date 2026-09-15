@@ -1,8 +1,16 @@
 import Foundation
 
 public enum TransactionOutcome: Sendable, Equatable {
-    case installed
+    case installedNew
+    case installedReplacing
     case conflict(ConflictRecord)
+
+    public var isInstalled: Bool {
+        switch self {
+        case .installedNew, .installedReplacing: true
+        case .conflict: false
+        }
+    }
 }
 
 public actor SyncTransactionCoordinator {
@@ -25,12 +33,12 @@ public actor SyncTransactionCoordinator {
         case .installedNew:
             try await database.markCommitted(id: operation.id, baseline: Baseline(remoteID: remoteID, relativePath: destination, sha256: remote.sha256, remoteRevision: remote.revision))
             try await database.finishOperation(id: operation.id)
-            return .installed
+            return .installedNew
         case .installedReplacing(let rollback):
             try await database.markCommitted(id: operation.id, baseline: Baseline(remoteID: remoteID, relativePath: destination, sha256: remote.sha256, remoteRevision: remote.revision))
             try await fileStore.discard(rollback)
             try await database.finishOperation(id: operation.id)
-            return .installed
+            return .installedReplacing
         case .localChanged:
             let conflictID = operation.id
             let incoming = try await fileStore.preserveAsConflict(artifact, conflictID: conflictID, at: destination)

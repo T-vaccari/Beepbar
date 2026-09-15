@@ -12,23 +12,50 @@ public struct PreparedSyncItem: Sendable, Equatable, Identifiable {
     }
 }
 
+public struct CourseSyncCount: Sendable, Equatable, Codable, Identifiable {
+    public let courseID: Int64
+    public let courseFolder: String
+    public let added: Int
+    public let updated: Int
+
+    public var id: Int64 { courseID }
+    public var total: Int { added + updated }
+
+    public init(courseID: Int64, courseFolder: String, added: Int, updated: Int) {
+        self.courseID = courseID
+        self.courseFolder = courseFolder
+        self.added = added
+        self.updated = updated
+    }
+}
+
 public struct SyncProgress: Sendable, Equatable {
     public let completed: Int
     public let total: Int
-    public let installed: Int
+    public let added: Int
+    public let updated: Int
     public let preservedLocal: Int
     public let unchanged: Int
     public let conflicts: Int
     public let failures: Int
+    public let perCourse: [CourseSyncCount]
 
-    public init(completed: Int, total: Int, installed: Int, preservedLocal: Int, unchanged: Int, conflicts: Int, failures: Int) {
+    public var installed: Int { added + updated }
+
+    public init(completed: Int, total: Int, added: Int, updated: Int, preservedLocal: Int, unchanged: Int, conflicts: Int, failures: Int, perCourse: [CourseSyncCount] = []) {
         self.completed = completed
         self.total = total
-        self.installed = installed
+        self.added = added
+        self.updated = updated
         self.preservedLocal = preservedLocal
         self.unchanged = unchanged
         self.conflicts = conflicts
         self.failures = failures
+        self.perCourse = perCourse
+    }
+
+    public init(completed: Int, total: Int, installed: Int, preservedLocal: Int, unchanged: Int, conflicts: Int, failures: Int) {
+        self.init(completed: completed, total: total, added: installed, updated: 0, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures)
     }
 }
 
@@ -74,19 +101,23 @@ public actor ManualSyncRun {
         let trace = PerformanceTrace.shared.begin("sync.downloadBatch", category: .sync)
         defer { PerformanceTrace.shared.end("sync.downloadBatch", category: .sync, state: trace) }
         var completed = 0
-        var installed = 0
+        var added = 0
+        var updated = 0
         var preservedLocal = 0
         var unchanged = 0
         var conflicts = 0
         var failures = 0
+        var perCourseAdded: [Int64: Int] = [:]
+        var perCourseUpdated: [Int64: Int] = [:]
+        var perCourseFolder: [Int64: String] = [:]
         let downloader = downloader ?? RemoteDownloader(maximumConnections: maximumConcurrentDownloads, allowsExpensiveNetworkAccess: allowsExpensiveNetworkAccess, policy: serverPolicy)
-        try await withThrowingTaskGroup(of: ManualSyncOutcome?.self) { group in
+        try await withThrowingTaskGroup(of: (PreparedSyncItem, ManualSyncOutcome?).self) { group in
             var next = 0
             func enqueue(_ item: PreparedSyncItem) {
                 group.addTask { [rootID, database, fileStore, downloader] in
                     do {
                         let engine = ManualSyncEngine(rootID: rootID, database: database, fileStore: fileStore, downloader: downloader)
-                        return try await engine.sync(file: item.remote, destination: item.destination, token: token)
+                        return (item, try await engine.sync(file: item.remote, destination: item.destination, token: token))
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch let error as RemoteDownloadError {
@@ -100,30 +131,49 @@ public actor ManualSyncRun {
                         case .transport(let status) where status >= 500:
                             throw WeBeepAPIError.transport(status)
                         default:
-                            return nil
+                            return (item, nil)
                         }
                     } catch {
-                        return nil
+                        return (item, nil)
                     }
                 }
             }
             while next < min(maximumConcurrentDownloads, items.count) { enqueue(items[next]); next += 1 }
-            while let outcome = try await group.next() {
+            while let (item, outcome) = try await group.next() {
                 try Task.checkCancellation()
                 completed += 1
+                let courseID = item.remote.courseID
                 switch outcome {
-                case .installed?: installed += 1
+                case .installedNew?:
+                    added += 1
+                    perCourseAdded[courseID, default: 0] += 1
+                    perCourseFolder[courseID] = Self.courseFolder(for: item.destination)
+                case .installedReplacing?:
+                    updated += 1
+                    perCourseUpdated[courseID, default: 0] += 1
+                    perCourseFolder[courseID] = Self.courseFolder(for: item.destination)
                 case .adoptedRemoteBaseline?: unchanged += 1
                 case .preservedLocal?: preservedLocal += 1
                 case .unchanged?, .skipped?: unchanged += 1
                 case .conflict?: conflicts += 1
                 case nil: failures += 1
                 }
-                await progress(SyncProgress(completed: completed, total: items.count, installed: installed, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures))
+                await progress(SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures, perCourse: Self.snapshotPerCourse(added: perCourseAdded, updated: perCourseUpdated, folders: perCourseFolder)))
                 if next < items.count { enqueue(items[next]); next += 1 }
             }
         }
         try Task.checkCancellation()
-        return SyncProgress(completed: completed, total: items.count, installed: installed, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures)
+        return SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures, perCourse: Self.snapshotPerCourse(added: perCourseAdded, updated: perCourseUpdated, folders: perCourseFolder))
+    }
+
+    private static func courseFolder(for destination: RelativePath) -> String {
+        destination.value.split(separator: "/", maxSplits: 1).first.map(String.init) ?? destination.value
+    }
+
+    private static func snapshotPerCourse(added: [Int64: Int], updated: [Int64: Int], folders: [Int64: String]) -> [CourseSyncCount] {
+        let ids = Set(added.keys).union(updated.keys)
+        return ids.map { id in
+            CourseSyncCount(courseID: id, courseFolder: folders[id] ?? "", added: added[id] ?? 0, updated: updated[id] ?? 0)
+        }.sorted { $0.courseFolder.localizedStandardCompare($1.courseFolder) == .orderedAscending }
     }
 }

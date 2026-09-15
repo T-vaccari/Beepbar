@@ -17,7 +17,7 @@ struct SyncTransactionCoordinatorTests {
         let artifact = try await store.finalize(stage)
         let remote = RemoteState(sha256: artifact.sha256, revision: "2")
 
-        #expect(try await coordinator.install(rootID: rootID, remoteID: "file", destination: path, expectedLocal: .missing, remote: remote, artifact: artifact) == .installed)
+        #expect(try await coordinator.install(rootID: rootID, remoteID: "file", destination: path, expectedLocal: .missing, remote: remote, artifact: artifact) == .installedNew)
         #expect(try await database.baseline(rootID: rootID, remoteID: "file") == Baseline(remoteID: "file", relativePath: path, sha256: artifact.sha256, remoteRevision: "2"))
         #expect(try await database.pendingOperations().isEmpty)
     }
