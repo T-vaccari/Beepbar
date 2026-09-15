@@ -81,6 +81,48 @@ public enum WeBeepAPIError: Error, Sendable, Equatable {
     case unexpectedSite
     case missingRequiredFunction
     case transport(Int)
+    case network(NetworkFailure)
+}
+
+public enum NetworkFailure: Error, Sendable, Equatable {
+    case offline
+    case timedOut
+    case connectionLost
+    case other(Int)
+
+    public init(_ code: URLError.Code) {
+        switch code {
+        case .notConnectedToInternet, .internationalRoamingOff, .dataNotAllowed, .callIsActive:
+            self = .offline
+        case .networkConnectionLost:
+            self = .connectionLost
+        case .timedOut:
+            self = .timedOut
+        default:
+            self = .other(code.rawValue)
+        }
+    }
+}
+
+public enum SyncServiceFailure: Sendable, Equatable {
+    case authenticationExpired
+    case connectivity
+    case serviceUnavailable
+    case incompatibleResponse
+
+    public init(_ error: WeBeepAPIError) {
+        switch error {
+        case .invalidToken:
+            self = .authenticationExpired
+        case .network:
+            self = .connectivity
+        case .transport(let status) where status >= 500:
+            self = .serviceUnavailable
+        case .transport, .invalidResponse, .unexpectedRedirect, .responseTooLarge,
+             .malformedPayload, .unexpectedSite, .missingRequiredFunction:
+            self = .incompatibleResponse
+        }
+    }
 }
 
 public struct WeBeepServerPolicy: Sendable, Equatable {
@@ -247,7 +289,8 @@ public final class WeBeepAPIClient: @unchecked Sendable {
         let request = Self.request(function: function, token: token, fields: fields, endpoint: policy.endpoint)
         let (data, response): (Data, URLResponse)
         do { (data, response) = try await session.data(for: request) }
-        catch let error as URLError where error.code == .cancelled || error.code == .badServerResponse { throw WeBeepAPIError.unexpectedRedirect }
+        catch let error as URLError where error.code == .cancelled { throw CancellationError() }
+        catch let error as URLError { throw WeBeepAPIError.network(NetworkFailure(error.code)) }
         catch { throw WeBeepAPIError.invalidResponse }
         guard let http = response as? HTTPURLResponse else { throw WeBeepAPIError.invalidResponse }
         guard (200...299).contains(http.statusCode) else { throw WeBeepAPIError.transport(http.statusCode) }

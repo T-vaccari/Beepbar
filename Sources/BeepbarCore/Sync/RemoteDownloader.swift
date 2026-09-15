@@ -5,6 +5,7 @@ public enum RemoteDownloadError: Error, Sendable, Equatable {
     case unexpectedRedirect
     case cancelled
     case transport(Int)
+    case network(NetworkFailure)
     case invalidResponse
     case tooLarge
 }
@@ -44,8 +45,9 @@ public final class RemoteDownloader: @unchecked Sendable {
         let temporaryURL: URL
         let response: URLResponse
         do { (temporaryURL, response) = try await session.download(for: request) }
-        catch let error as URLError where error.code == .cancelled { throw RemoteDownloadError.cancelled }
+        catch let error as URLError where error.code == .cancelled { throw CancellationError() }
         catch let error as URLError where error.code == .badServerResponse { throw RemoteDownloadError.unexpectedRedirect }
+        catch let error as URLError { throw RemoteDownloadError.network(NetworkFailure(error.code)) }
         catch { throw RemoteDownloadError.invalidResponse }
         guard let http = response as? HTTPURLResponse else { throw RemoteDownloadError.invalidResponse }
         guard http.statusCode == 200 else { throw RemoteDownloadError.transport(http.statusCode) }

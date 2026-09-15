@@ -1,21 +1,26 @@
 import Foundation
 
+public enum CredentialAccess: Sendable, Equatable {
+    case interactive
+    case nonInteractive
+}
+
 public actor CredentialVault {
-    private let read: @Sendable () throws -> String
+    private let read: @Sendable (CredentialAccess) throws -> String
     private let write: @Sendable (String) throws -> Void
     private var cachedToken: String?
 
     public init(
-        read: @escaping @Sendable () throws -> String,
+        read: @escaping @Sendable (CredentialAccess) throws -> String,
         write: @escaping @Sendable (String) throws -> Void
     ) {
         self.read = read
         self.write = write
     }
 
-    public func load() throws -> String {
+    public func load(_ access: CredentialAccess = .interactive) throws -> String {
         if let cachedToken { return cachedToken }
-        let token = try read()
+        let token = try read(access)
         cachedToken = token
         return token
     }

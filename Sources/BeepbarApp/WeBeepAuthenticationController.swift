@@ -1,10 +1,48 @@
 import AppKit
 import Foundation
+import LocalAuthentication
 import Security
 import SwiftUI
 @preconcurrency import UserNotifications
 import WebKit
 import BeepbarCore
+
+enum AppFailure: Equatable {
+    case authenticationExpired
+    case connectivity
+    case serviceUnavailable
+    case incompatibleResponse
+    case keychainAuthorizationRequired
+    case keychainUnavailable
+    case partialSync
+    case local(String)
+
+    var title: String {
+        switch self {
+        case .authenticationExpired: "Accesso scaduto"
+        case .connectivity: "Connessione assente"
+        case .serviceUnavailable: "WeBeep non disponibile"
+        case .incompatibleResponse: "Problema con WeBeep"
+        case .keychainAuthorizationRequired: "Autorizzazione richiesta"
+        case .keychainUnavailable: "Portachiavi non disponibile"
+        case .partialSync: "Sincronizzazione incompleta"
+        case .local: "Richiede attenzione"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .authenticationExpired: "Accedi di nuovo per riprendere la sincronizzazione."
+        case .connectivity: "Controlla la connessione. Beepbar riproverà automaticamente."
+        case .serviceUnavailable: "WeBeep non risponde. I materiali locali restano disponibili."
+        case .incompatibleResponse: "WeBeep ha restituito una risposta inattesa. Riprova più tardi."
+        case .keychainAuthorizationRequired: "Apri Beepbar e autorizza l'accesso al Portachiavi."
+        case .keychainUnavailable: "Beepbar non riesce ad accedere al Portachiavi. Riprova più tardi."
+        case .partialSync: "Alcuni materiali non sono stati aggiornati. I file esistenti sono al sicuro."
+        case .local(let message): message
+        }
+    }
+}
 
 enum AppSyncState: Equatable {
     case starting
@@ -16,7 +54,7 @@ enum AppSyncState: Equatable {
     case cancelling
     case synced(Date)
     case conflicts(Int)
-    case failed(String)
+    case failed(AppFailure)
     case recoveryBlocked
 
     var title: String {
@@ -30,7 +68,7 @@ enum AppSyncState: Equatable {
         case .cancelling: "Annullamento in corso"
         case .synced: "Sincronizzato"
         case .conflicts(let count): "\(count) conflitti da risolvere"
-        case .failed: "Richiede attenzione"
+        case .failed(let failure): failure.title
         case .recoveryBlocked: "Intervento richiesto"
         }
     }
@@ -46,7 +84,7 @@ enum AppSyncState: Equatable {
         case .cancelling: "I file incompleti non verranno installati."
         case .synced(let date): "Aggiornato \(date.formatted(date: .abbreviated, time: .shortened))."
         case .conflicts: "Scegli quale versione mantenere nella sezione Conflitti."
-        case .failed(let message): message
+        case .failed(let failure): failure.detail
         case .recoveryBlocked: "Apri Beepbar per completare il recupero locale."
         }
     }
@@ -145,8 +183,13 @@ enum AccountState: Equatable {
                     switch result.credential {
                     case .present:
                         self.hasStoredCredential = true
-                        self.accountState = .connected
-                        await self.restorePersistedSyncState()
+                        if UserDefaults.standard.bool(forKey: Self.credentialExpiredKey) {
+                            self.accountState = .expired
+                            self.setSyncState(.failed(.authenticationExpired))
+                        } else {
+                            self.accountState = .connected
+                            await self.restorePersistedSyncState()
+                        }
                         self.configureBackgroundScheduler()
                     case .absent:
                         self.hasStoredCredential = false
@@ -158,7 +201,7 @@ enum AccountState: Equatable {
                     }
                 }
             } catch {
-                self?.setSyncState(.failed("Impossibile preparare lo stato locale. Riapri Beepbar."))
+                self?.setSyncState(.failed(.local("Impossibile preparare lo stato locale. Riapri Beepbar.")))
             }
         }
     }
@@ -172,13 +215,34 @@ enum AccountState: Equatable {
     }
 
     var menuBarActionTitle: String {
-        if case .syncing = syncState { return "Annulla sincronizzazione" }
-        if case .cancelling = syncState { return "Annulla sincronizzazione" }
-        if case .conflicts = syncState { return "Apri conflitti" }
-        if case .loginRequired = syncState { return "Accedi" }
-        if case .needsFolder = syncState { return "Apri Impostazioni" }
-        if case .failed = syncState, accountState == .expired { return "Accedi di nuovo" }
-        return "Sincronizza ora"
+        switch menuBarAction {
+        case .cancelSync: "Annulla sincronizzazione"
+        case .openConflicts: "Apri conflitti"
+        case .signIn: accountState == .expired ? "Accedi di nuovo" : "Accedi"
+        case .authorizeKeychain: "Autorizza accesso"
+        case .retryKeychain: "Riprova"
+        case .openSettings: "Apri Impostazioni"
+        case .synchronize: "Sincronizza ora"
+        }
+    }
+
+    private var menuBarAction: MenuBarAction {
+        let account: MenuBarAccountCondition
+        if case .failed(.keychainAuthorizationRequired) = syncState {
+            account = .keychainAuthorizationRequired
+        } else if case .failed(.keychainUnavailable) = syncState {
+            account = .keychainUnavailable
+        } else if accountState != .connected || !hasStoredCredential {
+            account = .loginRequired
+        } else {
+            account = .connected
+        }
+        return MenuBarActionPolicy.action(
+            syncActive: isSyncActive,
+            hasConflicts: !conflicts.isEmpty,
+            account: account,
+            hasRoot: rootURL != nil
+        )
     }
 
     var isSyncActive: Bool {
@@ -195,6 +259,7 @@ enum AccountState: Equatable {
 
     private func restorePersistedSyncState() async {
         guard !recoveryBlocked else { setSyncState(.recoveryBlocked); return }
+        guard accountState != .expired else { setSyncState(.failed(.authenticationExpired)); return }
         guard hasStoredCredential else { setSyncState(.loginRequired); return }
         guard rootURL != nil, let rootID else { setSyncState(.needsFolder); return }
         let open = (try? await database?.conflicts(rootID: rootID)) ?? []
@@ -205,7 +270,18 @@ enum AccountState: Equatable {
     }
 
     var canSynchronize: Bool {
-        hasStoredCredential && rootURL != nil && !enabledCourseIDs.isEmpty && !isSyncActive && !recoveryBlocked
+        accountState == .connected && hasStoredCredential && rootURL != nil && !enabledCourseIDs.isEmpty && !isSyncActive && !recoveryBlocked
+    }
+
+    func performMenuBarAction() {
+        switch menuBarAction {
+        case .cancelSync: cancelSynchronization()
+        case .openConflicts: ConflictWindowController.shared.show(self)
+        case .signIn: startLogin()
+        case .authorizeKeychain, .retryKeychain: validateConnection()
+        case .openSettings: ConfigurationWindowController.shared.show(self)
+        case .synchronize: synchronizeNow()
+        }
     }
 
     func refreshOnWindowOpen() {
@@ -243,7 +319,7 @@ enum AccountState: Equatable {
                 await self.restorePersistedSyncState()
                 self.configureBackgroundScheduler()
             } catch {
-                self?.setSyncState(.failed("Non è stato possibile usare questa cartella. Scegline un'altra."))
+                self?.setSyncState(.failed(.local("Non è stato possibile usare questa cartella. Scegline un'altra.")))
             }
         }
     }
@@ -331,13 +407,13 @@ enum AccountState: Equatable {
                 await self.completeSync(operationID, summary: summary, automatic: false)
             } catch is CancellationError {
                 self?.cancelledSync(operationID)
-            } catch let error as WeBeepAPIError where error == .invalidToken {
-                await self?.failedSync(operationID, expired: true, automatic: false)
+            } catch let error as WeBeepAPIError {
+                await self?.failedSync(operationID, error: error, automatic: false)
             } catch let error as KeychainError {
-                await self?.handleKeychainError(error)
+                await self?.handleKeychainError(error, background: false)
                 self?.endOperation(operationID)
             } catch {
-                await self?.failedSync(operationID, expired: false, automatic: false)
+                await self?.failedSync(operationID, error: nil, automatic: false)
             }
         }
     }
@@ -411,14 +487,16 @@ enum AccountState: Equatable {
                 let siteInfo = try await self.apiClient.validateToken(token)
                 self.siteInfo = siteInfo
                 self.accountState = .connected
+                UserDefaults.standard.removeObject(forKey: Self.credentialExpiredKey)
+                self.notificationCoordinator.clearFailure()
                 self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
                 self.configureBackgroundScheduler()
-            } catch let error as WeBeepAPIError where error == .invalidToken {
-                await self?.expireCredential()
+            } catch let error as WeBeepAPIError {
+                await self?.handleServiceFailure(error, automatic: false)
             } catch let error as KeychainError {
-                await self?.handleKeychainError(error)
+                await self?.handleKeychainError(error, background: false)
             } catch {
-                self?.setSyncState(.failed("Non è stato possibile verificare WeBeep. Riprova più tardi."))
+                self?.setSyncState(.failed(.local("Non è stato possibile verificare WeBeep. Riprova più tardi.")))
             }
         }
     }
@@ -442,13 +520,15 @@ enum AccountState: Equatable {
                 self.courses = courses.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending || ($0.displayName == $1.displayName && $0.id < $1.id) }
                 await self.restoreScopes(for: courses)
                 self.accountState = .connected
-                if case .starting = self.syncState { self.setSyncState(.readyUnchecked) }
-            } catch let error as WeBeepAPIError where error == .invalidToken {
-                await self?.expireCredential()
+                UserDefaults.standard.removeObject(forKey: Self.credentialExpiredKey)
+                self.notificationCoordinator.clearFailure()
+                await self.restorePersistedSyncState()
+            } catch let error as WeBeepAPIError {
+                await self?.handleServiceFailure(error, automatic: false)
             } catch let error as KeychainError {
-                await self?.handleKeychainError(error)
+                await self?.handleKeychainError(error, background: false)
             } catch {
-                self?.setSyncState(.failed("Non è stato possibile aggiornare i corsi. Riprova più tardi."))
+                self?.setSyncState(.failed(.local("Non è stato possibile aggiornare i corsi. Riprova più tardi.")))
             }
         }
     }
@@ -460,6 +540,7 @@ enum AccountState: Equatable {
     private static let autoSyncIntervalKey = "io.github.tvaccari.beepbar.auto-sync-interval.v1"
     private static let autoSyncDailyTimeKey = "io.github.tvaccari.beepbar.auto-sync-daily-time.v1"
     private static let lastSuccessfulReconciliationKey = "io.github.tvaccari.beepbar.last-successful-reconciliation.v1."
+    private static let credentialExpiredKey = "io.github.tvaccari.beepbar.credential-expired.v1"
 
     private static let automaticIntervals: Set<Int> = [1_800, 3_600, 7_200, 14_400, 86_400]
 
@@ -511,10 +592,10 @@ enum AccountState: Equatable {
                 guard self.selectedCourse?.id == selectedCourse.id else { return }
                 self.contents = contents
                 self.status = "Contenuti pronti."
-            } catch let error as WeBeepAPIError where error == .invalidToken {
-                await self?.expireCredential()
+            } catch let error as WeBeepAPIError {
+                await self?.handleServiceFailure(error, automatic: false)
             } catch let error as KeychainError {
-                await self?.handleKeychainError(error)
+                await self?.handleKeychainError(error, background: false)
             } catch { self?.status = "Impossibile caricare i contenuti. Nessun dato locale è stato modificato." }
         }
     }
@@ -533,6 +614,8 @@ enum AccountState: Equatable {
                 await self.credentialVault.invalidate()
                 self.hasStoredCredential = true
                 self.accountState = .connected
+                UserDefaults.standard.removeObject(forKey: Self.credentialExpiredKey)
+                self.notificationCoordinator.clearFailure()
                 self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
                 self.configureBackgroundScheduler()
                 self.status = result == .legacyRetained
@@ -558,6 +641,8 @@ enum AccountState: Equatable {
                 self.siteInfo = siteInfo
                 self.hasStoredCredential = true
                 self.accountState = .connected
+                UserDefaults.standard.removeObject(forKey: Self.credentialExpiredKey)
+                self.notificationCoordinator.clearFailure()
                 self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
                 self.configureBackgroundScheduler()
             } catch let error as WeBeepAPIError where error == .invalidToken {
@@ -664,7 +749,7 @@ enum AccountState: Equatable {
         let open = (try? await database.conflicts(rootID: rootID)) ?? []
         conflicts = open
         if failures > 0 {
-            setSyncState(.failed("Alcuni materiali non sono stati aggiornati. Riprova più tardi."))
+            setSyncState(.failed(.partialSync))
         } else if !open.isEmpty {
             setSyncState(.conflicts(open.count))
         } else {
@@ -738,7 +823,7 @@ enum AccountState: Equatable {
         let task = Task { [weak self] in
             do {
                 guard let self else { return }
-                let token = try await self.credentialVault.load()
+                let token = try await self.credentialVault.load(.nonInteractive)
                 let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient)
                 await self.beginTransfer(operationID, automatic: true)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .automatic) { [weak self] progress in
@@ -747,15 +832,15 @@ enum AccountState: Equatable {
                 await self.completeSync(operationID, summary: summary, automatic: true)
             } catch is CancellationError {
                 self?.cancelledSync(operationID)
-            } catch let error as WeBeepAPIError where error == .invalidToken {
-                await self?.failedSync(operationID, expired: true, automatic: true)
+            } catch let error as WeBeepAPIError {
+                await self?.failedSync(operationID, error: error, automatic: true)
             } catch let error as KeychainError {
-                await self?.handleKeychainError(error)
+                await self?.handleKeychainError(error, background: true)
                 self?.endOperation(operationID)
             } catch is RootOperationGateError {
                 self?.deferredAutomaticSync(operationID)
             } catch {
-                await self?.failedSync(operationID, expired: false, automatic: true)
+                await self?.failedSync(operationID, error: nil, automatic: true)
             }
         }
         syncTask = task
@@ -772,7 +857,9 @@ enum AccountState: Equatable {
     private func completeSync(_ operationID: UUID, summary: SyncProgress, automatic: Bool) async {
         guard activeOperationID == operationID else { return }
         await finishReconciliation(failures: summary.failures)
-        if automatic { await notificationCoordinator.notifyAutomaticRun(installed: summary.installed, conflicts: summary.conflicts, failures: summary.failures) }
+        if automatic { await notificationCoordinator.notifyAutomaticRun(installed: summary.installed, conflicts: conflicts, failures: summary.failures) }
+        if summary.failures == 0 { notificationCoordinator.clearFailure() }
+        configureBackgroundScheduler()
         endOperation(operationID)
     }
 
@@ -789,37 +876,58 @@ enum AccountState: Equatable {
         endOperation(operationID)
     }
 
-    private func failedSync(_ operationID: UUID, expired: Bool, automatic: Bool) async {
+    private func failedSync(_ operationID: UUID, error: WeBeepAPIError?, automatic: Bool) async {
         guard activeOperationID == operationID else { return }
-        if expired {
-            await expireCredential()
+        if let error {
+            await handleServiceFailure(error, automatic: automatic)
         } else {
-            setSyncState(.failed(automatic ? "Il controllo automatico non è riuscito. I file locali non sono stati modificati." : "Non è stato possibile controllare gli aggiornamenti. I file locali non sono stati modificati."))
-            if automatic { await notificationCoordinator.notifyAutomaticRun(installed: 0, conflicts: 0, failures: 1) }
+            setSyncState(.failed(.partialSync))
+            if automatic { await notificationCoordinator.notify(issue: .partialSync) }
         }
         endOperation(operationID)
     }
 
-    private func expireCredential() async {
+    private func handleServiceFailure(_ error: WeBeepAPIError, automatic: Bool) async {
+        switch SyncServiceFailure(error) {
+        case .authenticationExpired:
+            await expireCredential(notify: automatic)
+        case .connectivity:
+            setSyncState(.failed(.connectivity))
+        case .serviceUnavailable:
+            setSyncState(.failed(.serviceUnavailable))
+            if automatic { await notificationCoordinator.notify(issue: .serviceUnavailable) }
+        case .incompatibleResponse:
+            setSyncState(.failed(.incompatibleResponse))
+            if automatic { await notificationCoordinator.notify(issue: .incompatibleResponse) }
+        }
+    }
+
+    private func expireCredential(notify: Bool = false) async {
         await credentialVault.invalidate()
+        UserDefaults.standard.set(true, forKey: Self.credentialExpiredKey)
         accountState = .expired
-        setSyncState(.failed("La sessione WeBeep è scaduta. Accedi di nuovo."))
+        setSyncState(.failed(.authenticationExpired))
+        if notify { await notificationCoordinator.notify(issue: .authenticationExpired) }
         configureBackgroundScheduler()
     }
 
-    private func handleKeychainError(_ error: KeychainError) async {
+    private func handleKeychainError(_ error: KeychainError, background: Bool = false) async {
         await credentialVault.invalidate()
-        hasStoredCredential = false
         switch error {
         case .absent, .corrupt:
+            hasStoredCredential = false
             accountState = .notConnected
             setSyncState(.loginRequired)
-        case .accessDenied:
-            accountState = .notConnected
-            setSyncState(.failed("Beepbar non può leggere il Portachiavi. Controlla l'accesso e riprova."))
+        case .interactionRequired, .accessDenied:
+            setSyncState(.failed(.keychainAuthorizationRequired))
+            if background {
+                backgroundScheduler?.invalidate()
+                backgroundScheduler = nil
+                scheduledConfiguration = nil
+                return
+            }
         case .write, .read:
-            accountState = .notConnected
-            setSyncState(.failed("Il Portachiavi non è disponibile. Riprova più tardi."))
+            setSyncState(.failed(.keychainUnavailable))
         }
         configureBackgroundScheduler()
     }
@@ -906,8 +1014,38 @@ private actor BootstrapService {
     }
 }
 
+private enum AutomaticNotificationIssue: String {
+    case authenticationExpired
+    case serviceUnavailable
+    case incompatibleResponse
+    case partialSync
+
+    var title: String {
+        switch self {
+        case .authenticationExpired: "Accesso WeBeep scaduto"
+        case .serviceUnavailable: "WeBeep non disponibile"
+        case .incompatibleResponse: "Problema con WeBeep"
+        case .partialSync: "Sincronizzazione incompleta"
+        }
+    }
+
+    var body: String {
+        switch self {
+        case .authenticationExpired: "Apri Beepbar e accedi di nuovo per riprendere la sincronizzazione."
+        case .serviceUnavailable: "WeBeep non risponde. I materiali locali restano disponibili."
+        case .incompatibleResponse: "WeBeep ha restituito una risposta inattesa. Apri Beepbar per i dettagli."
+        case .partialSync: "Alcuni materiali non sono stati aggiornati. Apri Beepbar per i dettagli."
+        }
+    }
+}
+
 @MainActor private final class SyncNotificationCoordinator {
-    private var lastErrorSignature: String?
+    private static let prefix = "io.github.tvaccari.beepbar.notification.v2"
+    private let deduplication: NotificationDeduplicationStore
+
+    init(defaults: UserDefaults = .standard) {
+        deduplication = NotificationDeduplicationStore(defaults: defaults, prefix: Self.prefix)
+    }
 
     func requestAuthorizationIfNeeded() async {
         let center = UNUserNotificationCenter.current()
@@ -916,23 +1054,38 @@ private actor BootstrapService {
         _ = try? await center.requestAuthorization(options: [.alert, .sound])
     }
 
-    func notifyAutomaticRun(installed: Int, conflicts: Int, failures: Int) async {
+    func notifyAutomaticRun(installed: Int, conflicts: [ConflictRecord], failures: Int) async {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized else { return }
-        if conflicts > 0 {
-            await send(center, title: "Conflitti da risolvere", body: "Beepbar ha conservato separatamente \(conflicts) versione/i remota/e.", identifier: "beepbar-conflicts-\(UUID().uuidString)")
+        if conflicts.isEmpty {
+            deduplication.resolve(condition: "conflicts")
+        } else {
+            let fingerprint = NotificationFingerprint.conflicts(conflicts)
+            if deduplication.shouldNotify(condition: "conflicts", fingerprint: fingerprint, now: Date()) {
+                await send(center, title: "Conflitti da risolvere", body: "Beepbar ha conservato separatamente \(conflicts.count) versione/i remota/e.", identifier: "beepbar-conflicts")
+            }
         }
         if failures > 0 {
-            let signature = "automatic-sync-failure"
-            guard lastErrorSignature != signature else { return }
-            lastErrorSignature = signature
-            await send(center, title: "Sincronizzazione non completata", body: "Alcuni materiali non sono stati aggiornati. Apri Beepbar per i dettagli.", identifier: "beepbar-error-\(UUID().uuidString)")
+            await notify(issue: .partialSync)
         } else {
-            lastErrorSignature = nil
             if installed > 0 {
                 await send(center, title: "Nuovi materiali disponibili", body: "Beepbar ha aggiunto \(installed) materiale/i nella cartella scelta.", identifier: "beepbar-new-files-\(UUID().uuidString)")
             }
+        }
+    }
+
+    func notify(issue: AutomaticNotificationIssue) async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .authorized else { return }
+        guard deduplication.shouldNotify(condition: issue.rawValue, fingerprint: issue.rawValue, now: Date()) else { return }
+        await send(center, title: issue.title, body: issue.body, identifier: "beepbar-\(issue.rawValue)")
+    }
+
+    func clearFailure() {
+        for issue in [AutomaticNotificationIssue.authenticationExpired, .serviceUnavailable, .incompatibleResponse, .partialSync] {
+            deduplication.resolve(condition: issue.rawValue)
         }
     }
 
@@ -1022,10 +1175,15 @@ private enum KeychainTokenStore {
         var item = query; attributes.forEach { item[$0.key] = $0.value }; guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw KeychainError.write }
     }
 
-    static func load() throws -> String {
+    static func load(_ access: CredentialAccess) throws -> String {
         var query = currentQuery()
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         query[kSecReturnData as String] = true
+        if access == .nonInteractive {
+            let context = LAContext()
+            context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext as String] = context
+        }
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess else { throw KeychainError(status: status) }
@@ -1038,7 +1196,12 @@ private enum KeychainTokenStore {
     static func containsCredential() throws -> Bool {
         var query = currentQuery()
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        query[kSecReturnAttributes as String] = true
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = context
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecSuccess { return true }
         if status == errSecItemNotFound { return false }
         throw KeychainError(status: status)
@@ -1048,7 +1211,7 @@ private enum KeychainTokenStore {
         guard try !containsCredential() else { return .migrated }
         let legacyToken = try loadLegacyCredential()
         try addLocalCredential(legacyToken)
-        guard try load() == legacyToken else { throw KeychainError.corrupt }
+        guard try load(.interactive) == legacyToken else { throw KeychainError.corrupt }
         let deletions = legacyServices.map { SecItemDelete(legacyQuery(service: $0) as CFDictionary) }
         return deletions.allSatisfy { $0 == errSecSuccess || $0 == errSecItemNotFound } ? .migrated : .legacyRetained
     }
@@ -1092,13 +1255,15 @@ private enum KeychainError: Error, Sendable {
     case write
     case absent
     case accessDenied
+    case interactionRequired
     case corrupt
     case read(OSStatus)
 
     init(status: OSStatus) {
         switch status {
         case errSecItemNotFound: self = .absent
-        case errSecAuthFailed, errSecInteractionNotAllowed: self = .accessDenied
+        case errSecInteractionNotAllowed: self = .interactionRequired
+        case errSecAuthFailed, errSecUserCanceled: self = .accessDenied
         default: self = .read(status)
         }
     }

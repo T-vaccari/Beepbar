@@ -26,17 +26,7 @@ private struct MenuBarContent: View {
             .foregroundStyle(.secondary)
             .lineLimit(2)
         Button(authentication.menuBarActionTitle) {
-            if authentication.isSyncActive {
-                authentication.cancelSynchronization()
-            } else if !authentication.conflicts.isEmpty {
-                ConflictWindowController.shared.show(authentication)
-            } else if authentication.accountState != .connected {
-                authentication.startLogin()
-            } else if authentication.rootURL == nil {
-                ConfigurationWindowController.shared.show(authentication)
-            } else {
-                authentication.synchronizeNow()
-            }
+            authentication.performMenuBarAction()
         }
         Divider()
         Button("Apri Beepbar…") {
@@ -46,7 +36,7 @@ private struct MenuBarContent: View {
     }
 }
 
-@MainActor private final class ConfigurationWindowController: NSObject, NSWindowDelegate {
+@MainActor final class ConfigurationWindowController: NSObject, NSWindowDelegate {
     static let shared = ConfigurationWindowController()
     private var window: NSWindow?
     private var appearanceTrace: OSSignpostIntervalState?
@@ -176,7 +166,7 @@ private struct BeepbarConfigurationView: View {
 
 }
 
-@MainActor private final class ConflictWindowController: NSObject, NSWindowDelegate {
+@MainActor final class ConflictWindowController: NSObject, NSWindowDelegate {
     static let shared = ConflictWindowController()
     private var window: NSWindow?
 

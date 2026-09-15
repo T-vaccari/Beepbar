@@ -71,6 +71,40 @@ import Testing
         #expect(try Data(contentsOf: destination) == Data("changed".utf8))
     }
 
+    @Test func propagatesServerFailureDuringDownload() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.setStatus(course: 1, file: 0, status: 503)
+
+        await #expect(throws: WeBeepAPIError.transport(503)) {
+            try await fixture.synchronize(targets: [fixture.targets[0]])
+        }
+    }
+
+    @Test(arguments: [401, 403])
+    func validatesTokenOnceBeforeClassifyingDownloadAuthorizationFailure(_ status: Int) async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.setStatus(course: 1, file: 0, status: status)
+
+        await #expect(throws: WeBeepAPIError.transport(status)) {
+            try await fixture.synchronize(targets: [fixture.targets[0]])
+        }
+        #expect(fixture.upstream.validationCount == 1)
+    }
+
+    @Test func reportsExpiredTokenAfterDownloadAuthorizationFailure() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.setStatus(course: 1, file: 0, status: 401)
+        fixture.upstream.tokenIsValid = false
+
+        await #expect(throws: WeBeepAPIError.invalidToken) {
+            try await fixture.synchronize(targets: [fixture.targets[0]])
+        }
+        #expect(fixture.upstream.validationCount == 1)
+    }
+
     @Test func recreatesDeletedCourseDirectoryAndReinstallsFiles() async throws {
         let fixture = try await Fixture()
         defer { fixture.remove() }
@@ -279,10 +313,13 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
     private var downloads = 0
     private var activeDownloads = 0
     private var peakDownloads = 0
+    private var validations = 0
     var downloadDelay: TimeInterval = 0
+    var tokenIsValid = true
 
     var downloadCount: Int { lock.withLock { downloads } }
     var maximumActiveDownloads: Int { lock.withLock { peakDownloads } }
+    var validationCount: Int { lock.withLock { validations } }
     func resetDownloadCount() { lock.withLock { downloads = 0 } }
 
     func populate(courses: Int, filesPerCourse: Int) {
@@ -306,6 +343,16 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
             let url = request.url!
             if request.httpMethod == "POST" {
                 let body = String(data: request.httpBody ?? bodyData(from: request.httpBodyStream), encoding: .utf8) ?? ""
+                if formValue("wsfunction", body: body) == "core_webservice_get_site_info" {
+                    validations += 1
+                    let response: Data
+                    if tokenIsValid {
+                        response = Data(#"{"userid":7,"siteurl":"https://fixture.beepbar.test","functions":[{"name":"core_enrol_get_users_courses"},{"name":"core_course_get_contents"}]}"#.utf8)
+                    } else {
+                        response = Data(#"{"exception":"invalidtoken","errorcode":"invalidtoken"}"#.utf8)
+                    }
+                    return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, response, 0, false)
+                }
                 let course = Int64(formValue("courseid", body: body) ?? "") ?? 0
                 let response = contents(course: course)
                 return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, response, 0, false)

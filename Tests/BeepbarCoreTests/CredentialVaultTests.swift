@@ -5,7 +5,7 @@ import XCTest
 final class CredentialVaultTests: XCTestCase {
     func testConcurrentLoadsReadSecretOnlyOnce() async throws {
         let store = TestCredentialStore(token: "token")
-        let vault = CredentialVault(read: { try store.read() }, write: { try store.write($0) })
+        let vault = CredentialVault(read: { _ in try store.read() }, write: { try store.write($0) })
 
         let values = try await withThrowingTaskGroup(of: String.self) { group in
             for _ in 0..<20 { group.addTask { try await vault.load() } }
@@ -18,7 +18,7 @@ final class CredentialVaultTests: XCTestCase {
 
     func testSaveUpdatesCacheWithoutAnotherRead() async throws {
         let store = TestCredentialStore(token: "old")
-        let vault = CredentialVault(read: { try store.read() }, write: { try store.write($0) })
+        let vault = CredentialVault(read: { _ in try store.read() }, write: { try store.write($0) })
 
         try await vault.save("new")
         let token = try await vault.load()
@@ -29,7 +29,7 @@ final class CredentialVaultTests: XCTestCase {
 
     func testFailedReadIsNotCachedAndInvalidationForcesOneNewRead() async throws {
         let store = TestCredentialStore(token: nil)
-        let vault = CredentialVault(read: { try store.read() }, write: { try store.write($0) })
+        let vault = CredentialVault(read: { _ in try store.read() }, write: { try store.write($0) })
 
         await XCTAssertThrowsErrorAsync { _ = try await vault.load() }
         store.token = "first"
@@ -41,6 +41,22 @@ final class CredentialVaultTests: XCTestCase {
         XCTAssertEqual(second, "second")
         XCTAssertEqual(store.readCount, 3)
     }
+
+    func testNonInteractiveAccessIsForwardedToStore() async throws {
+        let access = AccessRecorder()
+        let vault = CredentialVault(read: { mode in access.record(mode); return "token" }, write: { _ in })
+
+        _ = try await vault.load(.nonInteractive)
+
+        XCTAssertEqual(access.last, .nonInteractive)
+    }
+}
+
+private final class AccessRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: CredentialAccess?
+    var last: CredentialAccess? { lock.withLock { value } }
+    func record(_ access: CredentialAccess) { lock.withLock { value = access } }
 }
 
 private enum TestCredentialError: Error { case absent }
