@@ -64,17 +64,20 @@ private struct MenuBarContent: View {
             window.setContentSize(NSSize(width: 760, height: 640))
             window.minSize = NSSize(width: 640, height: 480)
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.isReleasedWhenClosed = true
+            window.isReleasedWhenClosed = false
             window.delegate = self
             self.window = window
             window.makeKeyAndOrderFront(nil)
-            authentication.refreshOnWindowOpen()
         }
+        authentication.refreshOnWindowOpen()
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func windowWillClose(_ notification: Notification) {
-        window = nil
+        if let appearanceTrace {
+            PerformanceTrace.shared.end("ui.configurationWindow", category: .ui, state: appearanceTrace)
+        }
+        appearanceTrace = nil
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
@@ -187,16 +190,12 @@ private struct BeepbarConfigurationView: View {
             window.setContentSize(NSSize(width: 680, height: 420))
             window.minSize = NSSize(width: 520, height: 280)
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.isReleasedWhenClosed = true
+            window.isReleasedWhenClosed = false
             window.delegate = self
             self.window = window
             window.makeKeyAndOrderFront(nil)
         }
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        window = nil
     }
 }
 

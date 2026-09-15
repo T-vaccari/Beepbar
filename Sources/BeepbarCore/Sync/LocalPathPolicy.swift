@@ -36,16 +36,16 @@ public enum LocalPathPolicy {
         let module = component(file.moduleName)
         let remotePath = try file.remoteFilePath.split(separator: "/", omittingEmptySubsequences: true)
             .map { try validRemoteComponent(String($0)) }
-        if file.moduleType == "resource", file.isSingleFileResource {
-            let ext = URL(fileURLWithPath: file.filename).pathExtension
-            let resourceName = ext.isEmpty ? module : "\(module).\(component(ext))"
-            return try RelativePath([course, resourceName].joined(separator: "/"))
-        }
         let sectionName = file.sectionName.trimmingCharacters(in: .whitespacesAndNewlines)
         let prefix = sectionName.isEmpty || sectionName.localizedCaseInsensitiveContains("material")
             ? [course]
             : [course, component(sectionName)]
-        return try RelativePath((prefix + [module] + remotePath + [component(file.filename)]).joined(separator: "/"))
+        if file.moduleType == "resource", file.isSingleFileResource {
+            let ext = URL(fileURLWithPath: file.filename).pathExtension
+            let resourceName = ext.isEmpty ? module : "\(module).\(component(ext))"
+            return try RelativePath((prefix + remotePath + [resourceName]).joined(separator: "/"))
+        }
+        return try RelativePath((prefix + [module] + remotePath + [fileComponent(file.filename)]).joined(separator: "/"))
     }
 
     public static func uniqueDestination(_ destination: RelativePath, reserving paths: inout Set<String>) throws -> RelativePath {
@@ -62,7 +62,9 @@ public enum LocalPathPolicy {
         let normalized = input.precomposedStringWithCanonicalMapping
         let replaced = normalized.unicodeScalars.map { scalar -> Character in
             switch scalar.value {
-            case 0, 47, 58: return "-"
+            case 9, 10, 13: return " "
+            case 42, 58, 60, 62, 63, 34, 124: return "_"
+            case 0, 47: return "-"
             case 1...31: return "-"
             default: return Character(String(scalar))
             }
@@ -78,6 +80,10 @@ public enum LocalPathPolicy {
             throw LocalPathPolicyError.invalidRemotePath
         }
         return component(input)
+    }
+
+    private static func fileComponent(_ input: String) -> String {
+        component(input.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_"))
     }
 
     private static func normalized(_ path: RelativePath) -> String {

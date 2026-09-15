@@ -197,7 +197,9 @@ public final class WeBeepAPIClient: @unchecked Sendable {
                     return nil
                 }
                 let moduleContents = module.contents ?? []
-                let isSingleFileResource = module.modname?.lowercased() == "resource" && moduleContents.filter { $0.type == "file" }.count == 1
+                let isSingleFileResource = module.modname?.lowercased() == "resource"
+                    && moduleContents.count == 1
+                    && moduleContents.first?.type == "file"
                 let files = moduleContents.compactMap { content -> RemoteFileCandidate? in
                     guard content.type == "file" else { return nil }
                     guard let filename = bounded(content.filename), let remoteFilePath = bounded(content.filepath), content.filesize ?? -1 >= 0, content.timemodified ?? -1 >= 0,
@@ -271,7 +273,13 @@ public final class WeBeepAPIClient: @unchecked Sendable {
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = form(fields.merging(["wstoken": token, "wsfunction": function.rawValue, "moodlewsrestformat": "json"]) { _, required in required })
+        request.httpBody = form(fields.merging([
+            "wstoken": token,
+            "wsfunction": function.rawValue,
+            "moodlewsrestformat": "json",
+            "moodlewssettingfilter": "true",
+            "moodlewssettinglang": "it"
+        ]) { _, required in required })
         return request
     }
 
