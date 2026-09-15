@@ -10,7 +10,7 @@ Beepbar solves exactly that. It never overwrites your local work: take notes dir
 
 ## TL;DR / Install
 
-1. [Download Beepbar.dmg](https://github.com/T-vaccari/Beepbar/releases/download/latest/Beepbar.dmg), double-click it, then drag Beepbar into Applications. This link always points to the build from the latest commit on `main`.
+1. [Download Beepbar.dmg](https://github.com/T-vaccari/Beepbar/releases/download/latest/00-Beepbar.dmg), double-click it, then drag Beepbar into Applications. This link always points to the build from the latest commit on `main`.
 2. On first launch, right-click Beepbar and choose **Open**. If macOS blocks it, go to **System Settings > Privacy & Security** and choose **Open Anyway**.
 3. Open Beepbar from the menu bar, sign in to WeBeep in the browser, and choose the local sync folder.
 4. macOS will ask for **Keychain access** the first time you sign in — Beepbar stores your WeBeep login token there, never in plain text. Click **Allow**; this is expected.

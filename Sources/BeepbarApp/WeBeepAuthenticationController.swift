@@ -52,8 +52,9 @@ enum AppSyncState: Equatable {
     case checking
     case syncing
     case cancelling
-    case synced(Date)
-    case conflicts(Int)
+    case synced(SyncCompletionSummary)
+    case conflicts(Int, SyncCompletionSummary?)
+    case partial(SyncCompletionSummary)
     case failed(AppFailure)
     case recoveryBlocked
 
@@ -67,7 +68,8 @@ enum AppSyncState: Equatable {
         case .syncing: "Sincronizzazione in corso"
         case .cancelling: "Annullamento in corso"
         case .synced: "Sincronizzato"
-        case .conflicts(let count): "\(count) conflitti da risolvere"
+        case .conflicts(let count, _): "\(count) conflitti da risolvere"
+        case .partial: "Sincronizzazione incompleta"
         case .failed(let failure): failure.title
         case .recoveryBlocked: "Intervento richiesto"
         }
@@ -82,8 +84,9 @@ enum AppSyncState: Equatable {
         case .checking: "Verifica delle modifiche remote in corso…"
         case .syncing: "I file locali non vengono mai sovrascritti senza una scelta."
         case .cancelling: "I file incompleti non verranno installati."
-        case .synced(let date): "Aggiornato \(date.formatted(date: .abbreviated, time: .shortened))."
-        case .conflicts: "Scegli quale versione mantenere nella sezione Conflitti."
+        case .synced(let summary): summary.detail
+        case .conflicts(_, let summary): summary?.conflictDetail ?? "Scegli quale versione mantenere nella sezione Conflitti."
+        case .partial(let summary): summary.partialDetail
         case .failed(let failure): failure.detail
         case .recoveryBlocked: "Apri Beepbar per completare il recupero locale."
         }
@@ -93,11 +96,76 @@ enum AppSyncState: Equatable {
         switch self {
         case .synced: "checkmark.circle.fill"
         case .checking, .syncing, .cancelling: "arrow.triangle.2.circlepath"
-        case .conflicts: "exclamationmark.triangle.fill"
+        case .conflicts, .partial: "exclamationmark.triangle.fill"
         case .loginRequired, .needsFolder, .failed, .recoveryBlocked: "exclamationmark.circle.fill"
         case .starting, .readyUnchecked: "arrow.triangle.2.circlepath"
         }
     }
+}
+
+struct SyncCompletionSummary: Codable, Equatable {
+    let completedAt: Date
+    let added: Int
+    let updated: Int
+    let unchanged: Int
+    let preservedLocal: Int
+    let conflicts: Int
+    let failures: Int
+    let perCourse: [CourseSyncCount]
+
+    init(progress: SyncProgress, completedAt: Date = Date()) {
+        self.completedAt = completedAt
+        added = progress.added
+        updated = progress.updated
+        unchanged = progress.unchanged
+        preservedLocal = progress.preservedLocal
+        conflicts = progress.conflicts
+        failures = progress.failures
+        perCourse = progress.perCourse
+    }
+
+    init(completedAt: Date, added: Int, updated: Int, unchanged: Int, preservedLocal: Int, conflicts: Int, failures: Int, perCourse: [CourseSyncCount] = []) {
+        self.completedAt = completedAt
+        self.added = added
+        self.updated = updated
+        self.unchanged = unchanged
+        self.preservedLocal = preservedLocal
+        self.conflicts = conflicts
+        self.failures = failures
+        self.perCourse = perCourse
+    }
+
+    var affectedCourses: [CourseSyncCount] { perCourse.filter { $0.total > 0 } }
+    var hasDetail: Bool { !affectedCourses.isEmpty }
+
+    var detail: String {
+        let activity: String
+        switch (added, updated) {
+        case (0, 0):
+            activity = "Nessun nuovo materiale."
+        case let (a, 0):
+            activity = a == 1 ? "1 nuovo materiale scaricato." : "\(a) nuovi materiali scaricati."
+        case let (0, u):
+            activity = u == 1 ? "1 materiale aggiornato." : "\(u) materiali aggiornati."
+        case let (a, u):
+            let addedPart = a == 1 ? "1 nuovo materiale" : "\(a) nuovi materiali"
+            let updatedPart = u == 1 ? "1 aggiornato" : "\(u) aggiornati"
+            activity = "\(addedPart) · \(updatedPart)."
+        }
+        return activity + preservedSuffix
+    }
+
+    var conflictDetail: String { detail + " Apri Conflitti per scegliere quale versione mantenere." }
+    var partialDetail: String { "\(failures) materiali non aggiornati. I file esistenti sono al sicuro." }
+    private var preservedSuffix: String {
+        guard preservedLocal > 0 else { return "" }
+        return preservedLocal == 1 ? " 1 modifica locale conservata." : " \(preservedLocal) modifiche locali conservate."
+    }
+}
+
+extension CourseSyncCount {
+    var addedLabel: String { added == 1 ? "1 nuovo" : "\(added) nuovi" }
+    var updatedLabel: String { updated == 1 ? "1 aggiornato" : "\(updated) aggiornati" }
 }
 
 enum AccountState: Equatable {
@@ -163,6 +231,27 @@ enum AccountState: Equatable {
         apiClient = WeBeepAPIClient()
         database = nil
         super.init()
+#if DEBUG
+        if Self.isUIPreview {
+            let mockCourses = (1...100).map { index in
+                RemoteCourseSummary(id: Int64(index), shortName: String(format: "%06d", 58000 + index), displayName: "CORSO DI PROVA \(index) — MATERIALI E ATTIVITÀ", isVisible: true, startDate: nil, endDate: nil)
+            }
+            enabledCourseIDs = Set(mockCourses.prefix(64).map(\.id))
+            courses = Self.orderedForDisplay(mockCourses, enabledCourseIDs: enabledCourseIDs)
+            courseFolders = Dictionary(uniqueKeysWithValues: mockCourses.map { ($0.id, "Corso di prova \($0.id)") })
+            hasStoredCredential = true
+            accountState = .connected
+            rootURL = FileManager.default.temporaryDirectory
+            let mockPerCourse = [
+                CourseSyncCount(courseID: 1, courseFolder: "Corso di prova 1", added: 5, updated: 1),
+                CourseSyncCount(courseID: 7, courseFolder: "Corso di prova 7", added: 4, updated: 0),
+                CourseSyncCount(courseID: 23, courseFolder: "Corso di prova 23", added: 2, updated: 2),
+                CourseSyncCount(courseID: 41, courseFolder: "Corso di prova 41", added: 1, updated: 1),
+            ]
+            setSyncState(.synced(SyncCompletionSummary(completedAt: Date(), added: 12, updated: 4, unchanged: 83, preservedLocal: 1, conflicts: 0, failures: 0, perCourse: mockPerCourse)))
+            return
+        }
+#endif
         accountState = hasStoredCredential ? .connected : .notConnected
         setSyncState(.starting)
         let bootstrap = BootstrapService()
@@ -252,21 +341,39 @@ enum AccountState: Equatable {
     private func setSyncState(_ newState: AppSyncState) {
         syncState = newState
         status = newState.detail
-        if case .synced(let date) = newState, let rootID {
-            UserDefaults.standard.set(date.timeIntervalSince1970, forKey: Self.lastSuccessfulReconciliationKey + rootID.uuidString)
+        if case .synced(let summary) = newState, let rootID {
+            UserDefaults.standard.set(summary.completedAt.timeIntervalSince1970, forKey: Self.lastSuccessfulReconciliationKey + rootID.uuidString)
+            if let data = try? JSONEncoder().encode(summary) {
+                UserDefaults.standard.set(data, forKey: Self.lastSuccessfulSummaryKey + rootID.uuidString)
+            }
         }
     }
 
     private func restorePersistedSyncState() async {
+        guard !Self.isUIPreview else { return }
         guard !recoveryBlocked else { setSyncState(.recoveryBlocked); return }
         guard accountState != .expired else { setSyncState(.failed(.authenticationExpired)); return }
         guard hasStoredCredential else { setSyncState(.loginRequired); return }
         guard rootURL != nil, let rootID else { setSyncState(.needsFolder); return }
         let open = (try? await database?.conflicts(rootID: rootID)) ?? []
         conflicts = open
-        if !open.isEmpty { setSyncState(.conflicts(open.count)); return }
+        if !open.isEmpty { setSyncState(.conflicts(open.count, nil)); return }
+        if let data = UserDefaults.standard.data(forKey: Self.lastSuccessfulSummaryKey + rootID.uuidString),
+           let summary = try? JSONDecoder().decode(SyncCompletionSummary.self, from: data) {
+            setSyncState(.synced(summary))
+            return
+        }
         let timestamp = UserDefaults.standard.double(forKey: Self.lastSuccessfulReconciliationKey + rootID.uuidString)
-        setSyncState(timestamp > 0 ? .synced(Date(timeIntervalSince1970: timestamp)) : .readyUnchecked)
+        let legacy = SyncCompletionSummary(completedAt: Date(timeIntervalSince1970: timestamp), added: 0, updated: 0, unchanged: 0, preservedLocal: 0, conflicts: 0, failures: 0)
+        setSyncState(timestamp > 0 ? .synced(legacy) : .readyUnchecked)
+    }
+
+    var lastSyncSummary: SyncCompletionSummary? {
+        switch syncState {
+        case .synced(let summary), .partial(let summary): return summary
+        case .conflicts(_, let summary): return summary
+        default: return nil
+        }
     }
 
     var canSynchronize: Bool {
@@ -384,6 +491,12 @@ enum AccountState: Equatable {
     }
 
     func synchronizeNow() {
+#if DEBUG
+        if Self.isUIPreview {
+            courses = Self.orderedForDisplay(courses, enabledCourseIDs: enabledCourseIDs)
+            return
+        }
+#endif
         let selected = courses.filter { enabledCourseIDs.contains($0.id) }
         guard !selected.isEmpty else { setSyncState(.readyUnchecked); return }
         guard let database else { return }
@@ -435,7 +548,7 @@ enum AccountState: Equatable {
             guard let self else { return }
             let found = (try? await database.conflicts(rootID: rootID)) ?? []
             self.conflicts = found
-            if !found.isEmpty { self.setSyncState(.conflicts(found.count)) }
+            if !found.isEmpty { self.setSyncState(.conflicts(found.count, nil)) }
             else if case .conflicts = self.syncState { await self.restorePersistedSyncState() }
         }
     }
@@ -454,7 +567,7 @@ enum AccountState: Equatable {
                     self.status = "Conflitto risolto: la modifica locale è stata mantenuta."
                 case .useRemote:
                     let result = try await resolver.useRemote(id: conflict.id)
-                    guard case .installed = result else {
+                    guard result.isInstalled else {
                         self.status = "Il file locale è cambiato nel frattempo: conflitto lasciato aperto."
                         self.refreshConflicts()
                         return
@@ -477,6 +590,7 @@ enum AccountState: Equatable {
     }
 
     func validateConnection() {
+        guard !Self.isUIPreview else { return }
         guard !isVerifying else { return }
         isVerifying = true; status = "Verifica connessione WeBeep in corso…"
         Task { [weak self] in
@@ -502,6 +616,7 @@ enum AccountState: Equatable {
     }
 
     func loadCourses() {
+        guard !Self.isUIPreview else { return }
         guard !isLoadingCourses, !isSyncActive else { return }
         isLoadingCourses = true; status = "Caricamento corsi in corso…"
         Task { [weak self] in
@@ -517,8 +632,8 @@ enum AccountState: Equatable {
                 }
                 let courses = try await self.apiClient.fetchCourses(userID: siteInfo.userID, token: token)
                 self.siteInfo = siteInfo
-                self.courses = courses.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending || ($0.displayName == $1.displayName && $0.id < $1.id) }
                 await self.restoreScopes(for: courses)
+                self.courses = Self.orderedForDisplay(courses, enabledCourseIDs: self.enabledCourseIDs)
                 self.accountState = .connected
                 UserDefaults.standard.removeObject(forKey: Self.credentialExpiredKey)
                 self.notificationCoordinator.clearFailure()
@@ -540,7 +655,15 @@ enum AccountState: Equatable {
     private static let autoSyncIntervalKey = "io.github.tvaccari.beepbar.auto-sync-interval.v1"
     private static let autoSyncDailyTimeKey = "io.github.tvaccari.beepbar.auto-sync-daily-time.v1"
     private static let lastSuccessfulReconciliationKey = "io.github.tvaccari.beepbar.last-successful-reconciliation.v1."
+    private static let lastSuccessfulSummaryKey = "io.github.tvaccari.beepbar.last-successful-summary.v1."
     private static let credentialExpiredKey = "io.github.tvaccari.beepbar.credential-expired.v1"
+    private static var isUIPreview: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--ui-preview")
+#else
+        false
+#endif
+    }
 
     private static let automaticIntervals: Set<Int> = [1_800, 3_600, 7_200, 14_400, 86_400]
 
@@ -735,6 +858,15 @@ enum AccountState: Equatable {
         Self.defaultFolders(for: courses)[course.id] ?? LocalPathPolicy.defaultCourseFolder(course.displayName)
     }
 
+    static func orderedForDisplay(_ courses: [RemoteCourseSummary], enabledCourseIDs: Set<Int64>) -> [RemoteCourseSummary] {
+        courses.sorted { lhs, rhs in
+            let lhsEnabled = enabledCourseIDs.contains(lhs.id)
+            let rhsEnabled = enabledCourseIDs.contains(rhs.id)
+            if lhsEnabled != rhsEnabled { return lhsEnabled }
+            return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending || (lhs.displayName == rhs.displayName && lhs.id < rhs.id)
+        }
+    }
+
     private static func defaultFolders(for courses: [RemoteCourseSummary]) -> [Int64: String] {
         let names = Dictionary(grouping: courses, by: { LocalPathPolicy.defaultCourseFolder($0.displayName).precomposedStringWithCanonicalMapping.lowercased() })
         return Dictionary(uniqueKeysWithValues: courses.map { course in
@@ -744,16 +876,18 @@ enum AccountState: Equatable {
         })
     }
 
-    private func finishReconciliation(failures: Int) async {
+    private func finishReconciliation(progress: SyncProgress) async {
         guard let database, let rootID else { return }
         let open = (try? await database.conflicts(rootID: rootID)) ?? []
         conflicts = open
-        if failures > 0 {
-            setSyncState(.failed(.partialSync))
+        courses = Self.orderedForDisplay(courses, enabledCourseIDs: enabledCourseIDs)
+        let summary = SyncCompletionSummary(progress: progress)
+        if progress.failures > 0 {
+            setSyncState(.partial(summary))
         } else if !open.isEmpty {
-            setSyncState(.conflicts(open.count))
+            setSyncState(.conflicts(open.count, summary))
         } else {
-            setSyncState(.synced(Date()))
+            setSyncState(.synced(summary))
         }
     }
 
@@ -856,7 +990,7 @@ enum AccountState: Equatable {
 
     private func completeSync(_ operationID: UUID, summary: SyncProgress, automatic: Bool) async {
         guard activeOperationID == operationID else { return }
-        await finishReconciliation(failures: summary.failures)
+        await finishReconciliation(progress: summary)
         if automatic { await notificationCoordinator.notifyAutomaticRun(installed: summary.installed, conflicts: conflicts, failures: summary.failures) }
         if summary.failures == 0 { notificationCoordinator.clearFailure() }
         configureBackgroundScheduler()

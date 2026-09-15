@@ -7,7 +7,7 @@ import Testing
         let fixture = try await Fixture(remoteData: Data("base".utf8))
         defer { fixture.remove() }
         let engine = fixture.engine()
-        #expect(try await engine.sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .installed)
+        #expect(try await engine.sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .installedNew)
 
         try Data("local edit".utf8).write(to: fixture.destination)
         #expect(try await engine.sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .preservedLocal)
@@ -19,7 +19,7 @@ import Testing
         let fixture = try await Fixture(remoteData: Data("base".utf8))
         defer { fixture.remove() }
         let engine = fixture.engine()
-        #expect(try await engine.sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .installed)
+        #expect(try await engine.sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .installedNew)
         try Data("local edit".utf8).write(to: fixture.destination)
         IntegrationDownloadProtocol.data = Data("remote edit".utf8)
 
@@ -44,7 +44,7 @@ import Testing
         let fixture = try await Fixture(remoteData: Data("base".utf8))
         defer { fixture.remove() }
         let engine = fixture.engine()
-        #expect(try await engine.sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .installed)
+        #expect(try await engine.sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .installedNew)
         IntegrationDownloadProtocol.status = 404
         IntegrationDownloadProtocol.data = Data()
 
@@ -59,11 +59,11 @@ import Testing
         let fixture = try await Fixture(remoteData: Data("base".utf8))
         defer { fixture.remove() }
         let engine = fixture.engine()
-        #expect(try await engine.sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .installed)
+        #expect(try await engine.sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .installedNew)
         try FileManager.default.removeItem(at: fixture.destination)
         IntegrationDownloadProtocol.data = Data("remote v2".utf8)
 
-        #expect(try await engine.sync(file: fixture.file(revision: "2"), destination: fixture.path, token: "token") == .installed)
+        #expect(try await engine.sync(file: fixture.file(revision: "2"), destination: fixture.path, token: "token") == .installedNew)
         #expect(try Data(contentsOf: fixture.destination) == Data("remote v2".utf8))
         #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: "file")?.remoteRevision == "2")
     }
@@ -72,7 +72,7 @@ import Testing
         let fixture = try await Fixture(remoteData: Data("base".utf8))
         defer { fixture.remove() }
         let engine = fixture.engine()
-        #expect(try await engine.sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .installed)
+        #expect(try await engine.sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .installedNew)
 
         let values = try await fixture.database.baselines(rootID: fixture.rootID)
         #expect(values.count == 1)

@@ -10,13 +10,54 @@ import Testing
         let first = try await fixture.synchronize()
         #expect(first.total == 1_000)
         #expect(first.installed == 1_000)
+        #expect(first.added == 1_000)
+        #expect(first.updated == 0)
         #expect(fixture.upstream.downloadCount == 1_000)
         #expect(fixture.upstream.maximumActiveDownloads <= 3)
 
         fixture.upstream.resetDownloadCount()
         let second = try await fixture.synchronize()
+        #expect(second.added == 0)
+        #expect(second.updated == 0)
         #expect(second.total == 0)
         #expect(fixture.upstream.downloadCount == 0)
+    }
+
+    @Test func distinguishesNewDownloadsFromRemoteUpdates() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+
+        let first = try await fixture.synchronize(targets: [target])
+        #expect(first.added == 100)
+        #expect(first.updated == 0)
+
+        fixture.upstream.setFile(course: 1, file: 0, value: "remote update", revision: "2")
+        let second = try await fixture.synchronize(targets: [target])
+        #expect(second.added == 0)
+        #expect(second.updated == 1)
+    }
+
+    @Test func aggregatesAddedAndUpdatedCountsPerCourse() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let courseA = fixture.targets[0]
+        let courseB = fixture.targets[1]
+
+        let first = try await fixture.synchronize(targets: [courseA, courseB])
+        #expect(first.perCourse.count == 2)
+        let firstA = try #require(first.perCourse.first { $0.courseID == courseA.courseID })
+        let firstB = try #require(first.perCourse.first { $0.courseID == courseB.courseID })
+        #expect(firstA.added == 100 && firstA.updated == 0)
+        #expect(firstB.added == 100 && firstB.updated == 0)
+        #expect(firstA.courseFolder == courseA.localFolder)
+
+        fixture.upstream.setFile(course: courseA.courseID, file: 0, value: "remote update", revision: "2")
+        let second = try await fixture.synchronize(targets: [courseA, courseB])
+        #expect(second.perCourse.count == 1)
+        let secondA = try #require(second.perCourse.first)
+        #expect(secondA.courseID == courseA.courseID)
+        #expect(secondA.added == 0 && secondA.updated == 1)
     }
 
     @Test func resolvesBothConflictChoicesWithoutReopeningTheConflict() async throws {
@@ -68,6 +109,7 @@ import Testing
         try FileManager.default.removeItem(at: destination)
         let restored = try await fixture.synchronize(targets: [fixture.targets[0]])
         #expect(restored.installed == 1)
+        #expect(restored.added == 1)
         #expect(try Data(contentsOf: destination) == Data("changed".utf8))
     }
 

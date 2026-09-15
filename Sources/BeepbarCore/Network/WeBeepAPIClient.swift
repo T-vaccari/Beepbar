@@ -13,6 +13,15 @@ public struct RemoteCourseSummary: Sendable, Equatable, Identifiable {
     public let isVisible: Bool?
     public let startDate: Date?
     public let endDate: Date?
+
+    public init(id: Int64, shortName: String, displayName: String, isVisible: Bool?, startDate: Date?, endDate: Date?) {
+        self.id = id
+        self.shortName = shortName
+        self.displayName = displayName
+        self.isVisible = isVisible
+        self.startDate = startDate
+        self.endDate = endDate
+    }
 }
 
 public struct RemoteCourseContents: Sendable, Equatable {

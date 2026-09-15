@@ -80,11 +80,11 @@ jobs:
           codesign --force --deep --sign - --identifier io.github.tvaccari.beepbar build/Release/Beepbar.app
           codesign --verify --deep --strict --verbose=2 build/Release/Beepbar.app
       - name: Create DMG
-        run: scripts/create-dmg.sh build/Release/Beepbar.app build/Beepbar.dmg
+        run: scripts/create-dmg.sh build/Release/Beepbar.app build/00-Beepbar.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: Beepbar-dmg
-          path: build/Beepbar.dmg
+          path: build/00-Beepbar.dmg
           if-no-files-found: error
       - name: Generate Sparkle appcast
         env:
@@ -94,8 +94,8 @@ jobs:
           mkdir -p /tmp/sparkle-tools
           tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle-tools
           SHORT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" build/Release/Beepbar.app/Contents/Info.plist)
-          SIGNATURE=$(echo "$SPARKLE_PRIVATE_KEY" | /tmp/sparkle-tools/bin/sign_update --ed-key-file - build/Beepbar.dmg -p)
-          LENGTH=$(stat -f%z build/Beepbar.dmg)
+          SIGNATURE=$(echo "$SPARKLE_PRIVATE_KEY" | /tmp/sparkle-tools/bin/sign_update --ed-key-file - build/00-Beepbar.dmg -p)
+          LENGTH=$(stat -f%z build/00-Beepbar.dmg)
           PUBDATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
           PREVIOUS=$(git rev-list -n 1 latest 2>/dev/null || true)
           if [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$GITHUB_SHA" ]; then
@@ -104,7 +104,9 @@ jobs:
             git log -1 --pretty='- %s (`%h`)' "$GITHUB_SHA" > release-notes.md
           fi
           cat > release-body.md <<BODYEOF
-          The most recent \`Beepbar.dmg\` built from \`main\` — this link always points to the newest code, so it updates automatically on every push.
+          [**Download Beepbar for macOS**](https://github.com/${{ github.repository }}/releases/download/latest/00-Beepbar.dmg)
+
+          The DMG is built from \`main\` and updates automatically on every push.
 
           Built from commit [\`${GITHUB_SHA}\`](https://github.com/${{ github.repository }}/commit/${GITHUB_SHA}). Ad-hoc signed, not notarized — see the [README](https://github.com/${{ github.repository }}#tldr--install) for the first-launch Gatekeeper step.
 
@@ -123,12 +125,14 @@ jobs:
                 <sparkle:version>$SHORT_VERSION</sparkle:version>
                 <sparkle:shortVersionString>$SHORT_VERSION</sparkle:shortVersionString>
                 <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-                <sparkle:releaseNotesLink>https://github.com/${{ github.repository }}/releases/tag/latest</sparkle:releaseNotesLink>
-                <enclosure url="https://github.com/${{ github.repository }}/releases/download/latest/Beepbar.dmg" sparkle:version="$SHORT_VERSION" sparkle:edSignature="$SIGNATURE" length="$LENGTH" type="application/octet-stream"/>
+                <description sparkle:format="markdown"><![CDATA[[View the changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)]]></description>
+                <enclosure url="https://github.com/${{ github.repository }}/releases/download/latest/00-Beepbar.dmg" sparkle:version="$SHORT_VERSION" sparkle:edSignature="$SIGNATURE" length="$LENGTH" type="application/octet-stream"/>
               </item>
             </channel>
           </rss>
           XMLEOF
+          ! grep -q 'sparkle:releaseNotesLink' appcast.xml
+          grep -Fq '[View the changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)' appcast.xml
       - name: Move latest tag to this commit
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
@@ -144,5 +148,5 @@ jobs:
           prerelease: true
           make_latest: true
           files: |
-            build/Beepbar.dmg
+            build/00-Beepbar.dmg
             appcast.xml

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep synchronization controls visible while scrolling long course lists.
+- Show how many materials were added or updated after every completed synchronization.
+- Add a per-course breakdown ("Dettaglio") of what changed in the last sync, with newly-selected courses grouped to the top after syncing.
+- Put the DMG first in the GitHub release assets and release notes.
+- Keep the Sparkle update window compact and link directly to the changelog instead of embedding the GitHub release page.
 - Build CI releases with the same Xcode 27 toolchain used for local Release builds.
 - Show the changes included in each GitHub release from Beepbar's update flow.
 
