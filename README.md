@@ -4,7 +4,9 @@
 [![Latest release](https://img.shields.io/github/v/release/T-vaccari/Beepbar?include_prereleases&label=release)](https://github.com/T-vaccari/Beepbar/releases/tag/latest)
 [![Downloads](https://img.shields.io/github/downloads/T-vaccari/Beepbar/total)](https://github.com/T-vaccari/Beepbar/releases)
 
-A native macOS app for syncing WeBeep materials locally. Its key feature is that it never overwrites your local work: if you take notes directly on a slide PDF, or edit a file on iPad/Mac after downloading it, that copy is preserved instead of being silently replaced when WeBeep publishes an update. On top of that, Beepbar is built specifically for Apple Silicon and stays native and ultra-lightweight in the background.
+Has another syncing app ever overwritten your annotated slides? Tired of renaming files just to stop them from being replaced? Looking for a syncing app that's super lightweight and feels native to your macOS environment?
+
+Beepbar solves exactly that. It never overwrites your local work: take notes directly on a slide PDF, or edit a file on iPad/Mac after downloading it, and that copy is preserved instead of being silently replaced when WeBeep publishes an update. Built specifically for Apple Silicon, it stays native and ultra-lightweight in the background.
 
 ## TL;DR / Install
 
