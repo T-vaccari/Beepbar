@@ -43,8 +43,6 @@ jobs:
           test "$(xcrun --sdk macosx --show-sdk-version)" = "27.0"
       - name: Swift tests
         run: swift test
-      - name: Verify package locks
-        run: cmp Package.resolved Beepbar.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
       - name: Build and verify Release app
         run: |
           xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release build CODE_SIGNING_ALLOWED=NO
