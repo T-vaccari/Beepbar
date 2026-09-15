@@ -33,21 +33,29 @@ jobs:
 
   test:
     name: Test
-    runs-on: macos-15
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
+      - name: Verify toolchain
+        run: |
+          xcodebuild -version
+          test "$(xcrun --sdk macosx --show-sdk-version)" = "27.0"
       - name: Swift tests
         run: swift test
 
   release-artifact:
     name: Release DMG
-    runs-on: macos-15
+    runs-on: xcode-27
     needs: [test, changes]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.production == 'true'
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Verify toolchain
+        run: |
+          xcodebuild -version
+          test "$(xcrun --sdk macosx --show-sdk-version)" = "27.0"
       - name: Compute build version
         run: |
           BASE_VERSION=$(xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release -showBuildSettings | awk '/ MARKETING_VERSION =/ { print $3 }')
