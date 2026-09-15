@@ -40,6 +40,11 @@ jobs:
           name: Beepbar-dmg
           path: build/Beepbar.dmg
           if-no-files-found: error
+      - name: Move latest tag to this commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git tag -f latest "$GITHUB_SHA"
+          git push -f origin latest
       - name: Publish latest release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
