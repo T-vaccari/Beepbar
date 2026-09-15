@@ -45,7 +45,8 @@ public enum LocalPathPolicy {
             let resourceName = ext.isEmpty ? module : "\(module).\(component(ext))"
             return try RelativePath((prefix + remotePath + [resourceName]).joined(separator: "/"))
         }
-        return try RelativePath((prefix + [module] + remotePath + [fileComponent(file.filename)]).joined(separator: "/"))
+        let modulePrefix = file.moduleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [module]
+        return try RelativePath((prefix + modulePrefix + remotePath + [fileComponent(file.filename)]).joined(separator: "/"))
     }
 
     public static func uniqueDestination(_ destination: RelativePath, reserving paths: inout Set<String>) throws -> RelativePath {

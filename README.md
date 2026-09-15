@@ -4,7 +4,7 @@
 [![Latest release](https://img.shields.io/github/v/release/T-vaccari/Beepbar?include_prereleases&label=release)](https://github.com/T-vaccari/Beepbar/releases/tag/latest)
 [![Downloads](https://img.shields.io/github/downloads/T-vaccari/Beepbar/total)](https://github.com/T-vaccari/Beepbar/releases)
 
-A native macOS app for syncing WeBeep materials locally. Beepbar is built specifically for Apple Silicon, stays lightweight in the background, and protects local changes instead of blindly replacing them with remote files.
+A native macOS app for syncing WeBeep materials locally. Its key feature is that it never overwrites your local work: if you take notes directly on a slide PDF, or edit a file on iPad/Mac after downloading it, that copy is preserved instead of being silently replaced when WeBeep publishes an update. On top of that, Beepbar is built specifically for Apple Silicon and stays native and ultra-lightweight in the background.
 
 ## TL;DR / Install
 
@@ -49,5 +49,13 @@ scripts/create-dmg.sh build/Release/Beepbar.app build/Beepbar.dmg
 ```
 
 CI runs the tests and builds an ad-hoc-signed arm64 DMG.
+
+## Contributing
+
+Found a bug or have a feature request? [Open an issue](https://github.com/T-vaccari/Beepbar/issues). Pull requests are welcome too.
+
+## License
+
+[MIT](LICENSE)
 
 Beepbar is not affiliated with Politecnico di Milano or WeBeep.

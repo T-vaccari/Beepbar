@@ -114,9 +114,11 @@ public actor SyncCoordinator {
                 if next < targets.count { enqueue(next); next += 1 }
             }
             var items: [PreparedSyncItem] = []
-            var reservedPaths = Set(baselines.values.map {
-                $0.relativePath.value.precomposedStringWithCanonicalMapping.lowercased()
-            })
+            var reservedPaths: Set<String> = []
+            for baseline in baselines.values {
+                guard case .present = try await fileStore.inspect(baseline.relativePath) else { continue }
+                reservedPaths.insert(baseline.relativePath.value.precomposedStringWithCanonicalMapping.lowercased())
+            }
             for (index, files) in fetched.sorted(by: { $0.0 < $1.0 }) {
                 for file in files {
                     try Task.checkCancellation()

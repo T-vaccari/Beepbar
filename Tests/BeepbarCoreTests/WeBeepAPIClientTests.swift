@@ -132,6 +132,17 @@ import Testing
         #expect(contents.sections[0].modules[0].files[0].moduleName == "LECTURES")
     }
 
+    @Test func moduleWithoutANameIsKeptWithFallbackName() async throws {
+        let session = testSession { _ in
+            response(status: 200, body: #"[{"id":1,"name":"Materiali","modules":[{"id":4,"name":"","modname":"folder","contents":[{"type":"file","filename":"p0.pdf","filepath":"/","filesize":42,"timemodified":1,"fileurl":"https://webeep.polimi.it/webservice/pluginfile.php/1/a.pdf"}]}]}]"#)
+        }
+        let contents = try await WeBeepAPIClient(session: session).fetchContents(courseID: 9, token: "token")
+
+        #expect(contents.issueCount == 0)
+        #expect(contents.sections[0].modules.count == 1)
+        #expect(contents.sections[0].modules[0].files[0].isSupported)
+    }
+
     @Test func singleFileResourceRequiresExactlyOneContentEntry() async throws {
         let session = testSession { _ in
             response(status: 200, body: #"[{"id":1,"name":"Esami","modules":[{"id":4,"name":"Regole","modname":"resource","contents":[{"type":"file","filename":"rules.pdf","filepath":"/","filesize":42,"timemodified":1,"fileurl":"https://webeep.polimi.it/webservice/pluginfile.php/1/a.pdf"},{"type":"description","filename":"note"}]}]}]"#)
