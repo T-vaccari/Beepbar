@@ -293,7 +293,7 @@ private struct SettingsPage: View {
                             set: { UpdaterController.shared.automaticallyChecksForUpdates = $0 }
                         ))
                         Spacer()
-                        Button("Cerca aggiornamenti…") { UpdaterController.shared.checkForUpdates() }
+                        Button("Cerca aggiornamenti ora…") { UpdaterController.shared.checkForUpdates() }
                     }.padding(4)
                 }
             }
