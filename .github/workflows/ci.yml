@@ -43,6 +43,17 @@ jobs:
           test "$(xcrun --sdk macosx --show-sdk-version)" = "27.0"
       - name: Swift tests
         run: swift test
+      - name: Verify package locks
+        run: cmp Package.resolved Beepbar.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+      - name: Build and verify Release app
+        run: |
+          xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release build CODE_SIGNING_ALLOWED=NO
+          file build/Release/Beepbar.app/Contents/MacOS/Beepbar | grep -q 'arm64'
+          plutil -lint build/Release/Beepbar.app/Contents/Info.plist
+          test -f build/Release/Beepbar.app/Contents/Resources/Assets.car
+          test -d build/Release/Beepbar.app/Contents/Frameworks/Sparkle.framework
+          codesign --force --deep --sign - --identifier io.github.tvaccari.beepbar build/Release/Beepbar.app
+          codesign --verify --deep --strict --verbose=2 build/Release/Beepbar.app
 
   release-artifact:
     name: Release DMG
