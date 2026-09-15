@@ -13,12 +13,23 @@ Beepbar solves exactly that. It never overwrites your local work: take notes dir
 1. [Download Beepbar.dmg](https://github.com/T-vaccari/Beepbar/releases/download/latest/Beepbar.dmg), double-click it, then drag Beepbar into Applications. This link always points to the build from the latest commit on `main`.
 2. On first launch, right-click Beepbar and choose **Open**. If macOS blocks it, go to **System Settings > Privacy & Security** and choose **Open Anyway**.
 3. Open Beepbar from the menu bar, sign in to WeBeep in the browser, and choose the local sync folder.
+4. macOS will ask for **Keychain access** the first time you sign in — Beepbar stores your WeBeep login token there, never in plain text. Click **Allow**; this is expected.
 
-`Beepbar.dmg` is ad-hoc signed so macOS can verify its integrity, but it is not Developer ID signed or notarized because this project does not use an Apple Developer account. The initial Gatekeeper step is therefore expected. If it still blocks the app after moving it into Applications, use this fallback:
+`Beepbar.dmg` is ad-hoc signed so macOS can verify its integrity, but it is not Developer ID signed or notarized because this project does not use an Apple Developer account. The initial Gatekeeper step in step 2 is therefore expected. If it still blocks the app after moving it into Applications, use this fallback:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Beepbar.app
 ```
+
+The same ad-hoc signing also means the Keychain prompt in step 4 may show the app's bundle identifier (`io.github.tvaccari.beepbar`) instead of "Beepbar", and it can reappear after updating to a new build — both are known limitations of not having a paid Apple Developer account.
+
+## How to Use It
+
+- **Menu bar icon**: click it anytime for sync status and a one-click action (sign in, resolve conflicts, sync now). Open the full window with **"Apri Beepbar…"**.
+- **Pick your courses**: in Impostazioni, load your courses and toggle which ones to sync. Each gets its own subfolder inside the root you chose during setup — rename any of them from the same screen.
+- **Sync**: run it manually with **"Sincronizza ora"**, or turn on **"Sincronizzazione automatica"** in Impostazioni and pick an interval (from every 30 minutes to once a day).
+- **Resolve conflicts**: when both a local and remote version of a file changed, it shows up in the **Conflitti** section (with a badge count in the menu) — see [How the three-way sync works](#how-the-three-way-sync-works) for what to expect there.
+- **Check for updates**: opt in from Impostazioni — see [Auto-updates](#auto-updates).
 
 ## Why Beepbar
 
@@ -34,6 +45,7 @@ In a preliminary local measurement of the Release build, with automatic sync dis
 - Controlled parallel downloads, byte-level progress, and real cancellation
 - Selectable sync root and editable course-folder names
 - [Three-way sync](#how-the-three-way-sync-works) backed by SQLite, atomic staging, and explicit conflict resolution
+- [Opt-in auto-updates](#auto-updates) via Sparkle, checked against a signed appcast
 
 ## How the three-way sync works
 
@@ -44,6 +56,14 @@ Beepbar keeps a local SQLite baseline for every synced file: the hash and revisi
 - **Both changed** → Beepbar can't safely pick a winner, so it isolates the incoming version and surfaces an explicit conflict: keep your local copy, or switch to the remote one.
 
 Downloads are staged atomically before being installed, so an interrupted sync (crash, closed lid, lost connection) never leaves a half-written file behind.
+
+Open conflicts show up as a badge in the menu bar and in the app's **Conflitti** section — nothing is decided automatically. The incoming remote version is kept isolated on disk (never merged into your local file) until you pick "Mantieni locale" or "Usa versione remota" for each one; only your explicit choice determines which version is kept.
+
+## Auto-updates
+
+Beepbar can check for new builds via [Sparkle](https://sparkle-project.org), against an appcast published alongside every push to `main`. It's off by default — enable **"Controlla automaticamente"** in Settings, or trigger a one-off check with **"Cerca aggiornamenti…"**. Every update is signed with an EdDSA key that never leaves this repo's secrets, and Sparkle verifies that signature before installing anything.
+
+Because the app is ad-hoc signed (see the Keychain note above), macOS may prompt for Keychain access again after installing an update — this is expected, not a sign anything went wrong.
 
 ## Requirements
 

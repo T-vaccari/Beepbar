@@ -10,10 +10,12 @@
 		A10000000000000000000001 /* BeepbarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* BeepbarApp.swift */; };
 		A10000000000000000000002 /* WeBeepAuthenticationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* WeBeepAuthenticationController.swift */; };
 		A10000000000000000000006 /* BeepbarShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* BeepbarShellView.swift */; };
+		A10000000000000000000009 /* UpdaterController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* UpdaterController.swift */; };
 		A10000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* Assets.xcassets */; };
 		A10000000000000000000003 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000021 /* WebKit.framework */; };
 		A10000000000000000000004 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000022 /* Security.framework */; };
 		A10000000000000000000005 /* BeepbarCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000040 /* BeepbarCore */; };
+		A10000000000000000000008 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000041 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -21,6 +23,7 @@
 		A10000000000000000000011 /* BeepbarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BeepbarApp.swift; sourceTree = "<group>"; };
 		A10000000000000000000012 /* WeBeepAuthenticationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeBeepAuthenticationController.swift; sourceTree = "<group>"; };
 		A10000000000000000000014 /* BeepbarShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BeepbarShellView.swift; sourceTree = "<group>"; };
+		A10000000000000000000017 /* UpdaterController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterController.swift; sourceTree = "<group>"; };
 		A10000000000000000000013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10000000000000000000015 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -36,6 +39,7 @@
 				A10000000000000000000003 /* WebKit.framework in Frameworks */,
 				A10000000000000000000004 /* Security.framework in Frameworks */,
 				A10000000000000000000005 /* BeepbarCore in Frameworks */,
+				A10000000000000000000008 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -69,6 +73,7 @@
 				A10000000000000000000011 /* BeepbarApp.swift */,
 				A10000000000000000000012 /* WeBeepAuthenticationController.swift */,
 				A10000000000000000000014 /* BeepbarShellView.swift */,
+				A10000000000000000000017 /* UpdaterController.swift */,
 			);
 			name = Sources;
 			path = Sources/BeepbarApp;
@@ -119,6 +124,7 @@
 			name = Beepbar;
 			packageProductDependencies = (
 				A10000000000000000000040 /* BeepbarCore */,
+				A10000000000000000000041 /* Sparkle */,
 			);
 			productName = Beepbar;
 			productReference = A10000000000000000000010 /* Beepbar.app */;
@@ -143,6 +149,7 @@
 			mainGroup = A10000000000000000000050;
 			packageReferences = (
 				A10000000000000000000042 /* XCLocalSwiftPackageReference "." */,
+				A10000000000000000000043 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			productRefGroup = A10000000000000000000054 /* Products */;
 			projectDirPath = "";
@@ -161,6 +168,7 @@
 				A10000000000000000000001 /* BeepbarApp.swift in Sources */,
 				A10000000000000000000002 /* WeBeepAuthenticationController.swift in Sources */,
 				A10000000000000000000006 /* BeepbarShellView.swift in Sources */,
+				A10000000000000000000009 /* UpdaterController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -195,6 +203,7 @@
 				MARKETING_VERSION = 2.0;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.tvaccari.beepbar;
 				PRODUCT_NAME = Beepbar;
@@ -214,6 +223,7 @@
 				MARKETING_VERSION = 2.0;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.tvaccari.beepbar;
 				PRODUCT_NAME = Beepbar;
@@ -254,10 +264,26 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		A10000000000000000000043 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.10.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		A10000000000000000000040 /* BeepbarCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BeepbarCore;
+		};
+		A10000000000000000000041 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000043 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

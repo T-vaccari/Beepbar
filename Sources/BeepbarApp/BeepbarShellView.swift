@@ -286,6 +286,16 @@ private struct SettingsPage: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(4)
                 }
+                GroupBox("Aggiornamenti") {
+                    HStack {
+                        Toggle("Controlla automaticamente", isOn: Binding(
+                            get: { UpdaterController.shared.automaticallyChecksForUpdates },
+                            set: { UpdaterController.shared.automaticallyChecksForUpdates = $0 }
+                        ))
+                        Spacer()
+                        Button("Cerca aggiornamenti…") { UpdaterController.shared.checkForUpdates() }
+                    }.padding(4)
+                }
             }
             .padding(20)
         }
