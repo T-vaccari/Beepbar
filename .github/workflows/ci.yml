@@ -29,25 +29,45 @@ jobs:
               - 'scripts/**'
               - 'Package.swift'
               - 'Package.resolved'
+              - 'CHANGELOG.md'
               - '.github/workflows/ci.yml'
 
   test:
     name: Test
-    runs-on: macos-15
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
+      - name: Verify toolchain
+        run: |
+          xcodebuild -version
+          test "$(xcrun --sdk macosx --show-sdk-version)" = "27.0"
       - name: Swift tests
         run: swift test
+      - name: Build and verify Release app
+        run: |
+          xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release build CODE_SIGNING_ALLOWED=NO
+          file build/Release/Beepbar.app/Contents/MacOS/Beepbar | grep -q 'arm64'
+          plutil -lint build/Release/Beepbar.app/Contents/Info.plist
+          test -f build/Release/Beepbar.app/Contents/Resources/Assets.car
+          test -d build/Release/Beepbar.app/Contents/Frameworks/Sparkle.framework
+          codesign --force --deep --sign - --identifier io.github.tvaccari.beepbar build/Release/Beepbar.app
+          codesign --verify --deep --strict --verbose=2 build/Release/Beepbar.app
 
   release-artifact:
     name: Release DMG
-    runs-on: macos-15
+    runs-on: xcode-27
     needs: [test, changes]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.production == 'true'
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify toolchain
+        run: |
+          xcodebuild -version
+          test "$(xcrun --sdk macosx --show-sdk-version)" = "27.0"
       - name: Compute build version
         run: |
           BASE_VERSION=$(xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release -showBuildSettings | awk '/ MARKETING_VERSION =/ { print $3 }')
@@ -66,11 +86,6 @@ jobs:
           name: Beepbar-dmg
           path: build/Beepbar.dmg
           if-no-files-found: error
-      - name: Move latest tag to this commit
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git tag -f latest "$GITHUB_SHA"
-          git push -f origin latest
       - name: Generate Sparkle appcast
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
@@ -82,6 +97,21 @@ jobs:
           SIGNATURE=$(echo "$SPARKLE_PRIVATE_KEY" | /tmp/sparkle-tools/bin/sign_update --ed-key-file - build/Beepbar.dmg -p)
           LENGTH=$(stat -f%z build/Beepbar.dmg)
           PUBDATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
+          PREVIOUS=$(git rev-list -n 1 latest 2>/dev/null || true)
+          if [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$GITHUB_SHA" ]; then
+            git log --pretty='- %s (`%h`)' "$PREVIOUS..$GITHUB_SHA" > release-notes.md
+          else
+            git log -1 --pretty='- %s (`%h`)' "$GITHUB_SHA" > release-notes.md
+          fi
+          cat > release-body.md <<BODYEOF
+          The most recent \`Beepbar.dmg\` built from \`main\` — this link always points to the newest code, so it updates automatically on every push.
+
+          Built from commit [\`${GITHUB_SHA}\`](https://github.com/${{ github.repository }}/commit/${GITHUB_SHA}). Ad-hoc signed, not notarized — see the [README](https://github.com/${{ github.repository }}#tldr--install) for the first-launch Gatekeeper step.
+
+          ## Changes
+
+          $(cat release-notes.md)
+          BODYEOF
           cat > appcast.xml <<XMLEOF
           <?xml version="1.0" encoding="utf-8"?>
           <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
@@ -93,21 +123,24 @@ jobs:
                 <sparkle:version>$SHORT_VERSION</sparkle:version>
                 <sparkle:shortVersionString>$SHORT_VERSION</sparkle:shortVersionString>
                 <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+                <sparkle:releaseNotesLink>https://github.com/${{ github.repository }}/releases/tag/latest</sparkle:releaseNotesLink>
                 <enclosure url="https://github.com/${{ github.repository }}/releases/download/latest/Beepbar.dmg" sparkle:version="$SHORT_VERSION" sparkle:edSignature="$SIGNATURE" length="$LENGTH" type="application/octet-stream"/>
               </item>
             </channel>
           </rss>
           XMLEOF
+      - name: Move latest tag to this commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git tag -f latest "$GITHUB_SHA"
+          git push -f origin latest
       - name: Publish latest release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: Latest build
-          body: |
-            The most recent `Beepbar.dmg` built from `main` — this link always points to the newest code, so it updates automatically on every push.
-
-            Built from commit [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}). Ad-hoc signed, not notarized — see the [README](https://github.com/${{ github.repository }}#tldr--install) for the first-launch Gatekeeper step.
+          body_path: release-body.md
           prerelease: true
           make_latest: true
           files: |
