@@ -233,7 +233,8 @@ public final class WeBeepAPIClient: @unchecked Sendable {
             guard section.id > 0 else { issueCount += 1; return nil }
             let sectionName = MoodleText.normalized(section.name) ?? ""
             let modules = (section.modules ?? []).compactMap { module -> RemoteContentModule? in
-                guard module.id > 0, let name = MoodleText.normalized(module.name) else { issueCount += 1; return nil }
+                guard module.id > 0 else { issueCount += 1; return nil }
+                let name = MoodleText.normalized(module.name) ?? "Senza nome"
                 if let modname = module.modname?.lowercased(), ["forum", "url", "page", "label", "choice", "feedback", "lesson", "wooclap"].contains(modname) {
                     issueCount += (module.contents ?? []).count
                     return nil
