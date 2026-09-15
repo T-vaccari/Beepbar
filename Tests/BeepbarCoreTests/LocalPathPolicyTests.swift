@@ -44,6 +44,11 @@ struct LocalPathPolicyTests {
         #expect(try LocalPathPolicy.destination(courseFolder: "ALGEBRA", file: file).value == "ALGEBRA/LECTURES/intro.pdf")
     }
 
+    @Test func flattensUnnamedModuleIntoCourseFolder() throws {
+        let file = RemoteFileCandidate(id: "9:4:/pluginfile.php/a.pdf", courseID: 9, sectionID: 1, moduleID: 4, sectionName: "", moduleName: "", filename: "P0_Antonietti.pdf", remoteFilePath: "/", canonicalPluginPath: "/pluginfile.php/a.pdf", downloadURL: URL(string: "https://webeep.polimi.it/pluginfile.php/a.pdf"), size: 4, modifiedAt: nil, observedRevision: "1:4", isSupported: true)
+        #expect(try LocalPathPolicy.destination(courseFolder: "NUMERICAL LINEAR ALGEBRA", file: file).value == "NUMERICAL LINEAR ALGEBRA/P0_Antonietti.pdf")
+    }
+
     @Test func numbersDuplicateFilenames() throws {
         let original = try RelativePath("ALGEBRA/LECTURES/notes.pdf")
         var reserved = Set<String>()
