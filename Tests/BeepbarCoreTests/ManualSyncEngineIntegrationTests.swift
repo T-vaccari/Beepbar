@@ -26,9 +26,18 @@ import Testing
         let result = try await engine.sync(file: fixture.file(revision: "2"), destination: fixture.path, token: "token")
         guard case .conflict = result else { Issue.record("expected conflict"); return }
         #expect(try Data(contentsOf: fixture.destination) == Data("local edit".utf8))
-        #expect(try await fixture.database.conflicts(rootID: fixture.rootID).count == 1)
+        let firstConflicts = try await fixture.database.conflicts(rootID: fixture.rootID)
+        #expect(firstConflicts.count == 1)
         #expect(try await engine.sync(file: fixture.file(revision: "2"), destination: fixture.path, token: "token") == .skipped("conflitto già aperto"))
-        #expect(try await fixture.database.conflicts(rootID: fixture.rootID).count == 1)
+        let secondConflicts = try await fixture.database.conflicts(rootID: fixture.rootID)
+        #expect(secondConflicts.count == 1)
+
+        let suite = "ManualSyncEngineIntegrationTests.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let notifications = NotificationDeduplicationStore(defaults: defaults, prefix: "test")
+        #expect(notifications.shouldNotify(condition: "conflicts", fingerprint: NotificationFingerprint.conflicts(firstConflicts), now: .now))
+        #expect(!notifications.shouldNotify(condition: "conflicts", fingerprint: NotificationFingerprint.conflicts(secondConflicts), now: .now.addingTimeInterval(1)))
     }
 
     @Test func leavesLocalAndBaselineUntouchedAfter404() async throws {

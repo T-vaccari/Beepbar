@@ -71,7 +71,16 @@ public actor SyncCoordinator {
         }
         guard !work.isEmpty else { return SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0) }
         let runner = ManualSyncRun(rootID: rootID, database: database, fileStore: fileStore, gate: gate, maximumConcurrentDownloads: mode.downloadConcurrency, allowsExpensiveNetworkAccess: mode.allowsExpensiveNetworkAccess, serverPolicy: apiClient.policy, downloader: downloader)
-        return try await runner.startWithinLease(items: work, token: token, progress: progress)
+        do {
+            return try await runner.startWithinLease(items: work, token: token, progress: progress)
+        } catch SyncDownloadError.authorizationRejected(let status) {
+            do {
+                _ = try await apiClient.validateToken(token)
+            } catch WeBeepAPIError.invalidToken {
+                throw WeBeepAPIError.invalidToken
+            }
+            throw WeBeepAPIError.transport(status)
+        }
     }
 
     private func ensureManagedDirectories(_ targets: [SyncTarget]) async throws {

@@ -40,6 +40,14 @@ import Testing
         await #expect(throws: WeBeepAPIError.transport(503)) { try await WeBeepAPIClient(session: unavailable).validateToken("token") }
     }
 
+    @Test func classifiesFailuresForUserFacingRecovery() {
+        #expect(SyncServiceFailure(.invalidToken) == .authenticationExpired)
+        #expect(SyncServiceFailure(.network(.offline)) == .connectivity)
+        #expect(SyncServiceFailure(.transport(503)) == .serviceUnavailable)
+        #expect(SyncServiceFailure(.transport(403)) == .incompatibleResponse)
+        #expect(SyncServiceFailure(.malformedPayload) == .incompatibleResponse)
+    }
+
     @Test func decodesMinimalCoursesAndEncodesUserIDInBody() async throws {
         let built = WeBeepAPIClient.coursesRequest(userID: 7, token: "secret+token")
         #expect(built.url == WeBeepAPIClient.endpoint)

@@ -32,6 +32,10 @@ public struct SyncProgress: Sendable, Equatable {
     }
 }
 
+public enum SyncDownloadError: Error, Sendable, Equatable {
+    case authorizationRejected(Int)
+}
+
 public actor ManualSyncRun {
     private let rootID: UUID
     private let database: SyncDatabase
@@ -85,7 +89,22 @@ public actor ManualSyncRun {
                         return try await engine.sync(file: item.remote, destination: item.destination, token: token)
                     } catch is CancellationError {
                         throw CancellationError()
-                    } catch { return nil }
+                    } catch let error as RemoteDownloadError {
+                        switch error {
+                        case .cancelled:
+                            throw CancellationError()
+                        case .network(let failure):
+                            throw WeBeepAPIError.network(failure)
+                        case .transport(let status) where status == 401 || status == 403:
+                            throw SyncDownloadError.authorizationRejected(status)
+                        case .transport(let status) where status >= 500:
+                            throw WeBeepAPIError.transport(status)
+                        default:
+                            return nil
+                        }
+                    } catch {
+                        return nil
+                    }
                 }
             }
             while next < min(maximumConcurrentDownloads, items.count) { enqueue(items[next]); next += 1 }
