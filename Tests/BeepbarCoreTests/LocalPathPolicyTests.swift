@@ -44,7 +44,7 @@ struct LocalPathPolicyTests {
         #expect(try LocalPathPolicy.destination(courseFolder: "ALGEBRA", file: file).value == "ALGEBRA/LECTURES/intro.pdf")
     }
 
-    @Test func numbersDuplicateFilenamesLikeWeBeepSync() throws {
+    @Test func numbersDuplicateFilenames() throws {
         let original = try RelativePath("ALGEBRA/LECTURES/notes.pdf")
         var reserved = Set<String>()
 
@@ -58,7 +58,7 @@ struct LocalPathPolicyTests {
         #expect(try LocalPathPolicy.destination(courseFolder: "ALGEBRA", file: file).value == "ALGEBRA/LECTURES/part_one_draft.pdf")
     }
 
-    @Test func sanitizesSpecialCharactersLikeWeBeepSync() throws {
+    @Test func sanitizesSpecialCharacters() throws {
         let file = RemoteFileCandidate(id: "9:4:/pluginfile.php/a.pdf", courseID: 9, sectionID: 1, moduleID: 4, sectionName: "Exam:\t2026", moduleName: "Rules?*", filename: "draft\n\"one\"<>|.pdf", remoteFilePath: "/", canonicalPluginPath: "/pluginfile.php/a.pdf", downloadURL: nil, size: 4, modifiedAt: nil, observedRevision: "1:4", isSupported: true)
         #expect(try LocalPathPolicy.destination(courseFolder: "ALGEBRA", file: file).value == "ALGEBRA/Exam_ 2026/Rules__/draft _one____.pdf")
     }
