@@ -48,12 +48,16 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Compute build version
+        run: |
+          BASE_VERSION=$(xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release -showBuildSettings | awk '/ MARKETING_VERSION =/ { print $3 }')
+          echo "FULL_VERSION=${BASE_VERSION}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
       - name: Build arm64 Release app
-        run: xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release build CODE_SIGNING_ALLOWED=NO
+        run: xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release build CODE_SIGNING_ALLOWED=NO MARKETING_VERSION=$FULL_VERSION CURRENT_PROJECT_VERSION=$FULL_VERSION
       - name: Verify app
         run: |
           file build/Release/Beepbar.app/Contents/MacOS/Beepbar | grep -q 'arm64'
-          codesign --force --sign - --identifier io.github.tvaccari.beepbar build/Release/Beepbar.app
+          codesign --force --deep --sign - --identifier io.github.tvaccari.beepbar build/Release/Beepbar.app
           codesign --verify --deep --strict --verbose=2 build/Release/Beepbar.app
       - name: Create DMG
         run: scripts/create-dmg.sh build/Release/Beepbar.app build/Beepbar.dmg
@@ -80,3 +84,35 @@ jobs:
           prerelease: true
           make_latest: true
           files: build/Beepbar.dmg
+      - name: Update Sparkle appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz" -o /tmp/sparkle.tar.xz
+          mkdir -p /tmp/sparkle-tools
+          tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle-tools
+          SHORT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" build/Release/Beepbar.app/Contents/Info.plist)
+          SIGNATURE=$(echo "$SPARKLE_PRIVATE_KEY" | /tmp/sparkle-tools/bin/sign_update --ed-key-file - build/Beepbar.dmg -p)
+          LENGTH=$(stat -f%z build/Beepbar.dmg)
+          PUBDATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
+          cat > appcast.xml <<XMLEOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Beepbar</title>
+              <item>
+                <title>Latest build</title>
+                <pubDate>$PUBDATE</pubDate>
+                <sparkle:version>$SHORT_VERSION</sparkle:version>
+                <sparkle:shortVersionString>$SHORT_VERSION</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+                <enclosure url="https://github.com/${{ github.repository }}/releases/download/latest/Beepbar.dmg" sparkle:version="$SHORT_VERSION" sparkle:edSignature="$SIGNATURE" length="$LENGTH" type="application/octet-stream"/>
+              </item>
+            </channel>
+          </rss>
+          XMLEOF
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git diff --cached --quiet || git commit -m "Update appcast.xml [skip ci]"
+          git push origin HEAD:main
