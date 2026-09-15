@@ -27,15 +27,23 @@ xattr -dr com.apple.quarantine /Applications/Beepbar.app
 - Manual or configurable automatic sync
 - Controlled parallel downloads, byte-level progress, and real cancellation
 - Selectable sync root and editable course-folder names
-- Three-way sync backed by SQLite, atomic staging, and explicit conflict resolution
+- [Three-way sync](#how-the-three-way-sync-works) backed by SQLite, atomic staging, and explicit conflict resolution
+
+## How the three-way sync works
+
+Beepbar keeps a local SQLite baseline for every synced file: the hash and revision it had the moment it was last written to disk. On each sync it compares three states — the baseline, the current local file, and the current remote file:
+
+- **Only the remote changed** → the new version is downloaded and replaces the local copy.
+- **Only the local file changed** (you annotated a slide PDF, or edited it on iPad/Mac) → your copy is left untouched, and the baseline is quietly caught up so Beepbar knows your edit is now the source of truth.
+- **Both changed** → Beepbar can't safely pick a winner, so it isolates the incoming version and surfaces an explicit conflict: keep your local copy, or switch to the remote one.
+
+Downloads are staged atomically before being installed, so an interrupted sync (crash, closed lid, lost connection) never leaves a half-written file behind.
 
 ## Why Beepbar
 
 I wanted something built specifically for macOS: a small app that stays in the menu bar, does not keep a window open, and avoids aggressive background polling. It should be responsive when I need it and quiet when I leave it running throughout the day.
 
-Imagine modifying or annotating a PDF after Beepbar downloads it. If WeBeep later publishes a newer version, a simple mirror can replace your local file. Beepbar detects that both versions changed, preserves them separately, and lets you decide whether to keep your copy or use the remote one.
-
-In a preliminary local measurement of the Release build, with automatic sync disabled, Beepbar stayed around 14–15 MiB of memory for 30 minutes with effectively idle CPU use. This is a development reference, not a universal guarantee.
+In a preliminary local measurement of the Release build, with automatic sync disabled, Beepbar stayed around 14–15 MiB of memory for 30 minutes with effectively idle CPU use. This is a development reference, not a universal guarantee — but it's the kind of footprint you'd expect from a native Swift app with no bundled runtime, as opposed to Electron/TypeScript-based alternatives, which ship a full Chromium and Node.js runtime and typically carry a much heavier baseline memory and CPU cost.
 
 ## Requirements
 
