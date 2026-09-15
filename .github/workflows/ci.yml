@@ -22,6 +22,7 @@ jobs:
     name: Release DMG
     runs-on: macos-15
     needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
     steps:
