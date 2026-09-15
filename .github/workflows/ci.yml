@@ -10,6 +10,27 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      production: ${{ steps.filter.outputs.production }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            production:
+              - 'Sources/**'
+              - 'App/**'
+              - 'Tests/**'
+              - 'Beepbar.xcodeproj/**'
+              - 'scripts/**'
+              - 'Package.swift'
+              - 'Package.resolved'
+              - '.github/workflows/ci.yml'
+
   test:
     name: Test
     runs-on: macos-15
@@ -21,8 +42,8 @@ jobs:
   release-artifact:
     name: Release DMG
     runs-on: macos-15
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, changes]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.production == 'true'
     permissions:
       contents: write
     steps:
