@@ -20,6 +20,12 @@ Beepbar solves exactly that. It never overwrites your local work: take notes dir
 xattr -dr com.apple.quarantine /Applications/Beepbar.app
 ```
 
+## Why Beepbar
+
+I wanted something built specifically for macOS: a small app that stays in the menu bar, does not keep a window open, and avoids aggressive background polling. It should be responsive when I need it and quiet when I leave it running throughout the day.
+
+In a preliminary local measurement of the Release build, with automatic sync disabled, Beepbar stayed around 14–15 MiB of memory for 30 minutes with effectively idle CPU use. This is a development reference, not a universal guarantee — but it's the kind of footprint you'd expect from a native Swift app with no bundled runtime, as opposed to Electron/TypeScript-based alternatives, which ship a full Chromium and Node.js runtime and typically carry a much heavier baseline memory and CPU cost.
+
 ## Features
 
 - Menu-bar app with clear sync status and contextual actions
@@ -38,12 +44,6 @@ Beepbar keeps a local SQLite baseline for every synced file: the hash and revisi
 - **Both changed** → Beepbar can't safely pick a winner, so it isolates the incoming version and surfaces an explicit conflict: keep your local copy, or switch to the remote one.
 
 Downloads are staged atomically before being installed, so an interrupted sync (crash, closed lid, lost connection) never leaves a half-written file behind.
-
-## Why Beepbar
-
-I wanted something built specifically for macOS: a small app that stays in the menu bar, does not keep a window open, and avoids aggressive background polling. It should be responsive when I need it and quiet when I leave it running throughout the day.
-
-In a preliminary local measurement of the Release build, with automatic sync disabled, Beepbar stayed around 14–15 MiB of memory for 30 minutes with effectively idle CPU use. This is a development reference, not a universal guarantee — but it's the kind of footprint you'd expect from a native Swift app with no bundled runtime, as opposed to Electron/TypeScript-based alternatives, which ship a full Chromium and Node.js runtime and typically carry a much heavier baseline memory and CPU cost.
 
 ## Requirements
 
