@@ -105,6 +105,53 @@ import Testing
         #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: destination.value).path))
     }
 
+    @Test func changedLocalAndRemoteFileConflictsAtTrackedLegacyDestination() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.synchronize(targets: [fixture.targets[0]])
+        let remoteID = fixture.remoteID(course: 1, file: 0)
+        let baseline = try #require(await fixture.database.baseline(rootID: fixture.rootID, remoteID: remoteID))
+        let legacyPath = try RelativePath("Course 1/legacy/0.txt")
+        let legacyURL = fixture.root.appending(path: legacyPath.value)
+        try FileManager.default.createDirectory(at: legacyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("local edit".utf8).write(to: legacyURL)
+        try await fixture.database.upsertBaseline(rootID: fixture.rootID, baseline: Baseline(
+            remoteID: remoteID,
+            relativePath: legacyPath,
+            sha256: baseline.sha256,
+            remoteRevision: baseline.remoteRevision
+        ))
+        fixture.upstream.setFile(course: 1, file: 0, value: "remote edit", revision: "2")
+
+        let result = try await fixture.synchronize(targets: [fixture.targets[0]])
+        let conflict = try #require(await fixture.database.conflicts(rootID: fixture.rootID).first)
+
+        #expect(result.conflicts == 1)
+        #expect(conflict.relativePath == legacyPath)
+        #expect(try Data(contentsOf: legacyURL) == Data("local edit".utf8))
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: remoteID)?.relativePath == legacyPath)
+    }
+
+    @Test func duplicateTrackedDestinationsFailBeforeDownloading() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let sharedPath = try RelativePath("Course 1/shared.txt")
+        for file in 0...1 {
+            try await fixture.database.upsertBaseline(rootID: fixture.rootID, baseline: Baseline(
+                remoteID: fixture.remoteID(course: 1, file: file),
+                relativePath: sharedPath,
+                sha256: String(repeating: "0", count: 64),
+                remoteRevision: "0"
+            ))
+        }
+
+        await #expect(throws: SyncDatabaseError.execution) {
+            try await fixture.synchronize(targets: [fixture.targets[0]])
+        }
+        #expect(fixture.upstream.downloadCount == 0)
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: sharedPath.value).path))
+    }
+
     @Test func cancellationLeavesNoBaselineOrStagingArtifacts() async throws {
         let fixture = try await Fixture()
         defer { fixture.remove() }

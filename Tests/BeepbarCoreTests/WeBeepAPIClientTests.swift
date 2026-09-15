@@ -8,7 +8,10 @@ import Testing
         #expect(built.url == WeBeepAPIClient.endpoint)
         #expect(built.httpMethod == "POST")
         #expect(built.url?.query == nil)
-        #expect(String(data: built.httpBody ?? Data(), encoding: .utf8)?.contains("wstoken=secret%2Btoken") == true)
+        let body = String(data: built.httpBody ?? Data(), encoding: .utf8) ?? ""
+        #expect(body.contains("wstoken=secret%2Btoken"))
+        #expect(body.contains("moodlewssettingfilter=true"))
+        #expect(body.contains("moodlewssettinglang=it"))
         let session = testSession { request in
             #expect(request.url == WeBeepAPIClient.endpoint)
             #expect(request.httpMethod == "POST")
@@ -41,7 +44,10 @@ import Testing
         let built = WeBeepAPIClient.coursesRequest(userID: 7, token: "secret+token")
         #expect(built.url == WeBeepAPIClient.endpoint)
         #expect(built.url?.query == nil)
-        #expect(String(data: built.httpBody ?? Data(), encoding: .utf8)?.contains("userid=7") == true)
+        let body = String(data: built.httpBody ?? Data(), encoding: .utf8) ?? ""
+        #expect(body.contains("userid=7"))
+        #expect(body.contains("moodlewssettingfilter=true"))
+        #expect(body.contains("moodlewssettinglang=it"))
         let session = testSession { _ in
             response(status: 200, body: #"[{"id":9,"shortname":"HPC","fullname":"High Performance Computing","visible":1,"startdate":0,"ignored":"field"}]"#)
         }
@@ -94,7 +100,10 @@ import Testing
     @Test func decodesSupportedFileMetadataWithoutDownloading() async throws {
         let built = WeBeepAPIClient.contentsRequest(courseID: 9, token: "secret")
         #expect(built.url?.query == nil)
-        #expect(String(data: built.httpBody ?? Data(), encoding: .utf8)?.contains("courseid=9") == true)
+        let body = String(data: built.httpBody ?? Data(), encoding: .utf8) ?? ""
+        #expect(body.contains("courseid=9"))
+        #expect(body.contains("moodlewssettingfilter=true"))
+        #expect(body.contains("moodlewssettinglang=it"))
         let session = testSession { _ in
             response(status: 200, body: #"[{"id":1,"name":"Week 1","modules":[{"id":4,"name":"Slides","contents":[{"type":"file","filename":"intro.pdf","filepath":"/","filesize":42,"timemodified":1,"fileurl":"https://webeep.polimi.it/webservice/pluginfile.php/1/a.pdf"}]}]}]"#)
         }
@@ -113,6 +122,24 @@ import Testing
         #expect(contents.sections[0].modules[0].name == "LECTURES")
         #expect(contents.sections[0].modules[0].files[0].sectionName.isEmpty)
         #expect(contents.sections[0].modules[0].files[0].moduleName == "LECTURES")
+    }
+
+    @Test func singleFileResourceRequiresExactlyOneContentEntry() async throws {
+        let session = testSession { _ in
+            response(status: 200, body: #"[{"id":1,"name":"Esami","modules":[{"id":4,"name":"Regole","modname":"resource","contents":[{"type":"file","filename":"rules.pdf","filepath":"/","filesize":42,"timemodified":1,"fileurl":"https://webeep.polimi.it/webservice/pluginfile.php/1/a.pdf"},{"type":"description","filename":"note"}]}]}]"#)
+        }
+        let contents = try await WeBeepAPIClient(session: session).fetchContents(courseID: 9, token: "token")
+
+        #expect(contents.sections[0].modules[0].files[0].isSingleFileResource == false)
+    }
+
+    @Test func recognizesResourceWithExactlyOneFileEntry() async throws {
+        let session = testSession { _ in
+            response(status: 200, body: #"[{"id":1,"name":"Esami","modules":[{"id":4,"name":"Regole","modname":"resource","contents":[{"type":"file","filename":"rules.pdf","filepath":"/","filesize":42,"timemodified":1,"fileurl":"https://webeep.polimi.it/webservice/pluginfile.php/1/a.pdf"}]}]}]"#)
+        }
+        let contents = try await WeBeepAPIClient(session: session).fetchContents(courseID: 9, token: "token")
+
+        #expect(contents.sections[0].modules[0].files[0].isSingleFileResource)
     }
 
     @Test func marksSuspiciousFileURLsUnsupported() async throws {

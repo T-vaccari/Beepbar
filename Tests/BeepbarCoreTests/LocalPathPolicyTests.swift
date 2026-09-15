@@ -30,8 +30,13 @@ struct LocalPathPolicyTests {
     }
 
     @Test func omitsMaterialsSectionAndFlattensSingleResource() throws {
-        let file = RemoteFileCandidate(id: "9:4:/pluginfile.php/a.pdf", courseID: 9, sectionID: 1, moduleID: 4, sectionName: "Materiali", moduleName: "Dispensa", moduleType: "resource", isSingleFileResource: true, filename: "originale.pdf", remoteFilePath: "/", canonicalPluginPath: "/pluginfile.php/a.pdf", downloadURL: URL(string: "https://webeep.polimi.it/pluginfile.php/a.pdf"), size: 4, modifiedAt: nil, observedRevision: "1:4", isSupported: true)
-        #expect(try LocalPathPolicy.destination(courseFolder: "Analisi", file: file).value == "Analisi/Dispensa.pdf")
+        let file = RemoteFileCandidate(id: "9:4:/pluginfile.php/a.pdf", courseID: 9, sectionID: 1, moduleID: 4, sectionName: "Materiali", moduleName: "Dispensa", moduleType: "resource", isSingleFileResource: true, filename: "originale.pdf", remoteFilePath: "/dispense/", canonicalPluginPath: "/pluginfile.php/a.pdf", downloadURL: URL(string: "https://webeep.polimi.it/pluginfile.php/a.pdf"), size: 4, modifiedAt: nil, observedRevision: "1:4", isSupported: true)
+        #expect(try LocalPathPolicy.destination(courseFolder: "Analisi", file: file).value == "Analisi/dispense/Dispensa.pdf")
+    }
+
+    @Test func keepsSectionAndRemotePathForSingleResource() throws {
+        let file = RemoteFileCandidate(id: "9:4:/pluginfile.php/a.pdf", courseID: 9, sectionID: 1, moduleID: 4, sectionName: "Esami", moduleName: "Regole esame", moduleType: "resource", isSingleFileResource: true, filename: "originale.pdf", remoteFilePath: "/2026/", canonicalPluginPath: "/pluginfile.php/a.pdf", downloadURL: URL(string: "https://webeep.polimi.it/pluginfile.php/a.pdf"), size: 4, modifiedAt: nil, observedRevision: "1:4", isSupported: true)
+        #expect(try LocalPathPolicy.destination(courseFolder: "Analisi", file: file).value == "Analisi/Esami/2026/Regole esame.pdf")
     }
 
     @Test func omitsUnnamedSection() throws {
@@ -46,6 +51,29 @@ struct LocalPathPolicyTests {
         #expect(try LocalPathPolicy.uniqueDestination(original, reserving: &reserved).value == "ALGEBRA/LECTURES/notes.pdf")
         #expect(try LocalPathPolicy.uniqueDestination(original, reserving: &reserved).value == "ALGEBRA/LECTURES/notes (1).pdf")
         #expect(try LocalPathPolicy.uniqueDestination(original, reserving: &reserved).value == "ALGEBRA/LECTURES/notes (2).pdf")
+    }
+
+    @Test func replacesFilenameSeparatorsWithoutCreatingDirectories() throws {
+        let file = RemoteFileCandidate(id: "9:4:/pluginfile.php/a.pdf", courseID: 9, sectionID: 1, moduleID: 4, sectionName: "", moduleName: "LECTURES", filename: "part/one\\draft.pdf", remoteFilePath: "/", canonicalPluginPath: "/pluginfile.php/a.pdf", downloadURL: nil, size: 4, modifiedAt: nil, observedRevision: "1:4", isSupported: true)
+        #expect(try LocalPathPolicy.destination(courseFolder: "ALGEBRA", file: file).value == "ALGEBRA/LECTURES/part_one_draft.pdf")
+    }
+
+    @Test func sanitizesSpecialCharactersLikeWeBeepSync() throws {
+        let file = RemoteFileCandidate(id: "9:4:/pluginfile.php/a.pdf", courseID: 9, sectionID: 1, moduleID: 4, sectionName: "Exam:\t2026", moduleName: "Rules?*", filename: "draft\n\"one\"<>|.pdf", remoteFilePath: "/", canonicalPluginPath: "/pluginfile.php/a.pdf", downloadURL: nil, size: 4, modifiedAt: nil, observedRevision: "1:4", isSupported: true)
+        #expect(try LocalPathPolicy.destination(courseFolder: "ALGEBRA", file: file).value == "ALGEBRA/Exam_ 2026/Rules__/draft _one____.pdf")
+    }
+
+    @Test func treatsCaseAndUnicodeEquivalentDestinationsAsDuplicates() throws {
+        var reserved = Set<String>()
+        let uppercase = try RelativePath("ALGEBRA/Notes.pdf")
+        let lowercase = try RelativePath("algebra/notes.pdf")
+        let decomposed = try RelativePath("ALGEBRA/Cafe\u{301}.pdf")
+        let composed = try RelativePath("ALGEBRA/Caf\u{e9}.pdf")
+
+        #expect(try LocalPathPolicy.uniqueDestination(uppercase, reserving: &reserved).value == "ALGEBRA/Notes.pdf")
+        #expect(try LocalPathPolicy.uniqueDestination(lowercase, reserving: &reserved).value == "algebra/notes (1).pdf")
+        #expect(try LocalPathPolicy.uniqueDestination(decomposed, reserving: &reserved).value == "ALGEBRA/Cafe\u{301}.pdf")
+        #expect(try LocalPathPolicy.uniqueDestination(composed, reserving: &reserved).value == "ALGEBRA/Caf\u{e9} (1).pdf")
     }
 
     @Test func extractsForkStyleCourseFolder() {
