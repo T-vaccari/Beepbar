@@ -221,15 +221,21 @@ enum AccountState: Equatable {
     private var rootID: UUID?
     private var scheduledConfiguration: BackgroundScheduleConfiguration?
 
+    // Pure and independently testable: whether onboarding should show depends only on these two
+    // inputs. An existing root always wins, regardless of the persisted flag — this is what makes
+    // an update to an already-set-up install never retrigger onboarding, even before this feature
+    // existed to ever set the flag in the first place.
+    nonisolated static func resolveNeedsOnboarding(existingRootURL: URL?, onboardingAlreadyCompleted: Bool) -> Bool {
+        existingRootURL == nil && !onboardingAlreadyCompleted
+    }
+
     override init() {
         hasStoredCredential = false
         let resolvedRootURL = Self.storedRootURL()
         rootURL = resolvedRootURL
+        needsOnboarding = Self.resolveNeedsOnboarding(existingRootURL: resolvedRootURL, onboardingAlreadyCompleted: Self.defaults.bool(forKey: Self.onboardingCompletedKey))
         if resolvedRootURL != nil {
-            needsOnboarding = false
             Self.defaults.set(true, forKey: Self.onboardingCompletedKey)
-        } else {
-            needsOnboarding = !Self.defaults.bool(forKey: Self.onboardingCompletedKey)
         }
         enabledCourseIDs = Set(Self.defaults.stringArray(forKey: Self.enabledCoursesKey)?.compactMap(Int64.init) ?? [])
         automaticSyncEnabled = Self.defaults.bool(forKey: Self.autoSyncKey)
