@@ -23,5 +23,6 @@ let package = Package(
             linkerSettings: [.linkedFramework("Security"), .linkedFramework("WebKit")]
         ),
         .testTarget(name: "BeepbarCoreTests", dependencies: ["BeepbarCore"]),
+        .testTarget(name: "BeepbarAppTests", dependencies: ["BeepbarApp"]),
     ]
 )
