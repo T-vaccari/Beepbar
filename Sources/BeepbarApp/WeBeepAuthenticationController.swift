@@ -195,6 +195,7 @@ enum AccountState: Equatable {
     @Published private(set) var syncState: AppSyncState = .starting
     @Published private(set) var accountState: AccountState = .notConnected
     @Published private(set) var rootURL: URL?
+    @Published private(set) var needsOnboarding: Bool
     @Published private(set) var enabledCourseIDs: Set<Int64>
     @Published private(set) var automaticSyncEnabled: Bool
     @Published private(set) var automaticSyncInterval: Int
@@ -222,17 +223,34 @@ enum AccountState: Equatable {
 
     override init() {
         hasStoredCredential = false
-        rootURL = Self.storedRootURL()
-        enabledCourseIDs = Set(UserDefaults.standard.stringArray(forKey: Self.enabledCoursesKey)?.compactMap(Int64.init) ?? [])
-        automaticSyncEnabled = UserDefaults.standard.bool(forKey: Self.autoSyncKey)
-        automaticSyncInterval = Self.validatedAutomaticInterval(UserDefaults.standard.object(forKey: Self.autoSyncIntervalKey) as? Int)
-        automaticDailyCheckTime = Self.dailyTime(UserDefaults.standard.object(forKey: Self.autoSyncDailyTimeKey) as? Int)
+        let resolvedRootURL = Self.storedRootURL()
+        rootURL = resolvedRootURL
+        if resolvedRootURL != nil {
+            needsOnboarding = false
+            Self.defaults.set(true, forKey: Self.onboardingCompletedKey)
+        } else {
+            needsOnboarding = !Self.defaults.bool(forKey: Self.onboardingCompletedKey)
+        }
+        enabledCourseIDs = Set(Self.defaults.stringArray(forKey: Self.enabledCoursesKey)?.compactMap(Int64.init) ?? [])
+        automaticSyncEnabled = Self.defaults.bool(forKey: Self.autoSyncKey)
+        automaticSyncInterval = Self.validatedAutomaticInterval(Self.defaults.object(forKey: Self.autoSyncIntervalKey) as? Int)
+        automaticDailyCheckTime = Self.dailyTime(Self.defaults.object(forKey: Self.autoSyncDailyTimeKey) as? Int)
         rootID = Self.storedRootID()
         apiClient = WeBeepAPIClient()
         database = nil
         super.init()
 #if DEBUG
+        if Self.isUIPreviewOnboarding {
+            // Fall through to the real bootstrap flow below (with the isolated preview
+            // database/defaults) instead of returning early, so "Scegli cartella…" in the
+            // onboarding UI exercises the actual chooseRoot() codepath, not a mock.
+            needsOnboarding = true
+            rootURL = nil
+            hasStoredCredential = false
+            accountState = .notConnected
+        }
         if Self.isUIPreview {
+            needsOnboarding = false
             let mockCourses = (1...100).map { index in
                 RemoteCourseSummary(id: Int64(index), shortName: String(format: "%06d", 58000 + index), displayName: "CORSO DI PROVA \(index) — MATERIALI E ATTIVITÀ", isVisible: true, startDate: nil, endDate: nil)
             }
@@ -276,7 +294,7 @@ enum AccountState: Equatable {
                     switch result.credential {
                     case .present:
                         self.hasStoredCredential = true
-                        if UserDefaults.standard.bool(forKey: Self.credentialExpiredKey) {
+                        if Self.defaults.bool(forKey: Self.credentialExpiredKey) {
                             self.accountState = .expired
                             self.setSyncState(.failed(.authenticationExpired))
                         } else {
@@ -346,9 +364,9 @@ enum AccountState: Equatable {
         syncState = newState
         status = newState.detail
         if case .synced(let summary) = newState, let rootID {
-            UserDefaults.standard.set(summary.completedAt.timeIntervalSince1970, forKey: Self.lastSuccessfulReconciliationKey + rootID.uuidString)
+            Self.defaults.set(summary.completedAt.timeIntervalSince1970, forKey: Self.lastSuccessfulReconciliationKey + rootID.uuidString)
             if let data = try? JSONEncoder().encode(summary) {
-                UserDefaults.standard.set(data, forKey: Self.lastSuccessfulSummaryKey + rootID.uuidString)
+                Self.defaults.set(data, forKey: Self.lastSuccessfulSummaryKey + rootID.uuidString)
             }
         }
     }
@@ -362,12 +380,12 @@ enum AccountState: Equatable {
         let open = (try? await database?.conflicts(rootID: rootID)) ?? []
         conflicts = open
         if !open.isEmpty { setSyncState(.conflicts(open.count, nil)); return }
-        if let data = UserDefaults.standard.data(forKey: Self.lastSuccessfulSummaryKey + rootID.uuidString),
+        if let data = Self.defaults.data(forKey: Self.lastSuccessfulSummaryKey + rootID.uuidString),
            let summary = try? JSONDecoder().decode(SyncCompletionSummary.self, from: data) {
             setSyncState(.synced(summary))
             return
         }
-        let timestamp = UserDefaults.standard.double(forKey: Self.lastSuccessfulReconciliationKey + rootID.uuidString)
+        let timestamp = Self.defaults.double(forKey: Self.lastSuccessfulReconciliationKey + rootID.uuidString)
         let legacy = SyncCompletionSummary(completedAt: Date(timeIntervalSince1970: timestamp), added: 0, updated: 0, unchanged: 0, preservedLocal: 0, conflicts: 0, failures: 0)
         setSyncState(timestamp > 0 ? .synced(legacy) : .readyUnchecked)
     }
@@ -425,14 +443,19 @@ enum AccountState: Equatable {
                 rootURL = selectedURL; rootID = selectedID; recoveryBlocked = false
                 courseFolders = [:]; conflicts = []
                 await restoreScopes(for: courses)
-                UserDefaults.standard.set(selectedURL.path, forKey: Self.rootKey)
-                UserDefaults.standard.set(selectedID.uuidString, forKey: Self.rootIDKey)
+                Self.defaults.set(selectedURL.path, forKey: Self.rootKey)
+                Self.defaults.set(selectedID.uuidString, forKey: Self.rootIDKey)
                 await self.restorePersistedSyncState()
                 self.configureBackgroundScheduler()
             } catch {
                 self?.setSyncState(.failed(.local("Non è stato possibile usare questa cartella. Scegline un'altra.")))
             }
         }
+    }
+
+    func completeOnboarding() {
+        needsOnboarding = false
+        Self.defaults.set(true, forKey: Self.onboardingCompletedKey)
     }
 
     func isCourseEnabled(_ course: RemoteCourseSummary) -> Bool {
@@ -443,7 +466,7 @@ enum AccountState: Equatable {
         guard !isSyncActive else { return }
         if enabled { enabledCourseIDs.insert(course.id) }
         else { enabledCourseIDs.remove(course.id) }
-        UserDefaults.standard.set(enabledCourseIDs.map(String.init).sorted(), forKey: Self.enabledCoursesKey)
+        Self.defaults.set(enabledCourseIDs.map(String.init).sorted(), forKey: Self.enabledCoursesKey)
         configureBackgroundScheduler()
         if let database, let rootID {
             let folder = courseFolders[course.id] ?? defaultFolder(for: course)
@@ -455,15 +478,15 @@ enum AccountState: Equatable {
     func setAutomaticSync(enabled: Bool) {
         guard !isSyncActive else { return }
         automaticSyncEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: Self.autoSyncKey)
+        Self.defaults.set(enabled, forKey: Self.autoSyncKey)
         if enabled { Task { await notificationCoordinator.requestAuthorizationIfNeeded() } }
         configureBackgroundScheduler()
     }
-    func setAutomaticSyncInterval(_ seconds: Int) { guard !isSyncActive else { return }; automaticSyncInterval = Self.validatedAutomaticInterval(seconds); UserDefaults.standard.set(automaticSyncInterval, forKey: Self.autoSyncIntervalKey); configureBackgroundScheduler() }
+    func setAutomaticSyncInterval(_ seconds: Int) { guard !isSyncActive else { return }; automaticSyncInterval = Self.validatedAutomaticInterval(seconds); Self.defaults.set(automaticSyncInterval, forKey: Self.autoSyncIntervalKey); configureBackgroundScheduler() }
     func setAutomaticDailyCheckTime(_ time: Date) {
         guard !isSyncActive else { return }
         automaticDailyCheckTime = Self.dailyTime(Self.secondsSinceMidnight(time))
-        UserDefaults.standard.set(Self.secondsSinceMidnight(automaticDailyCheckTime), forKey: Self.autoSyncDailyTimeKey)
+        Self.defaults.set(Self.secondsSinceMidnight(automaticDailyCheckTime), forKey: Self.autoSyncDailyTimeKey)
         configureBackgroundScheduler()
     }
 
@@ -605,7 +628,7 @@ enum AccountState: Equatable {
                 let siteInfo = try await self.apiClient.validateToken(token)
                 self.siteInfo = siteInfo
                 self.accountState = .connected
-                UserDefaults.standard.removeObject(forKey: Self.credentialExpiredKey)
+                Self.defaults.removeObject(forKey: Self.credentialExpiredKey)
                 self.notificationCoordinator.clearFailure()
                 self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
                 self.configureBackgroundScheduler()
@@ -639,7 +662,7 @@ enum AccountState: Equatable {
                 await self.restoreScopes(for: courses)
                 self.courses = Self.orderedForDisplay(courses, enabledCourseIDs: self.enabledCourseIDs)
                 self.accountState = .connected
-                UserDefaults.standard.removeObject(forKey: Self.credentialExpiredKey)
+                Self.defaults.removeObject(forKey: Self.credentialExpiredKey)
                 self.notificationCoordinator.clearFailure()
                 await self.restorePersistedSyncState()
             } catch let error as WeBeepAPIError {
@@ -652,6 +675,7 @@ enum AccountState: Equatable {
         }
     }
 
+    private static let onboardingCompletedKey = "io.github.tvaccari.beepbar.onboarding-completed.v1"
     private static let rootKey = "io.github.tvaccari.beepbar.root-path.v1"
     private static let rootIDKey = "io.github.tvaccari.beepbar.root-id.v1"
     private static let enabledCoursesKey = "io.github.tvaccari.beepbar.enabled-courses.v1"
@@ -668,6 +692,30 @@ enum AccountState: Equatable {
         false
 #endif
     }
+
+    private static var isUIPreviewOnboarding: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--ui-preview-onboarding")
+#else
+        false
+#endif
+    }
+
+    /// Every persisted setting goes through this instead of `Self.defaults` directly:
+    /// the raw `--ui-preview`/`--ui-preview-onboarding` binaries share the real app's bundle
+    /// identifier (they're unsigned executables built from the same target), so writing straight
+    /// to `.standard` during manual preview testing would silently overwrite the real installed
+    /// app's settings (sync root, credentials-expired flag, etc). Preview runs get their own
+    /// throwaway suite, wiped at launch so every preview run starts from a clean slate.
+    private static let defaults: UserDefaults = {
+        guard isUIPreview || isUIPreviewOnboarding else { return .standard }
+        let suiteName = "io.github.tvaccari.beepbar.preview"
+        let store = UserDefaults(suiteName: suiteName) ?? .standard
+        if let domain = store.persistentDomain(forName: suiteName) {
+            for key in domain.keys { store.removeObject(forKey: key) }
+        }
+        return store
+    }()
 
     private static let automaticIntervals: Set<Int> = [1_800, 3_600, 7_200, 14_400, 86_400]
 
@@ -695,7 +743,7 @@ enum AccountState: Equatable {
     }
 
     private static func storedRootURL() -> URL? {
-        guard let path = UserDefaults.standard.string(forKey: rootKey), !path.isEmpty else { return nil }
+        guard let path = Self.defaults.string(forKey: rootKey), !path.isEmpty else { return nil }
         let url = URL(fileURLWithPath: path).standardizedFileURL
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue ? url : nil
@@ -741,7 +789,7 @@ enum AccountState: Equatable {
                 await self.credentialVault.invalidate()
                 self.hasStoredCredential = true
                 self.accountState = .connected
-                UserDefaults.standard.removeObject(forKey: Self.credentialExpiredKey)
+                Self.defaults.removeObject(forKey: Self.credentialExpiredKey)
                 self.notificationCoordinator.clearFailure()
                 self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
                 self.configureBackgroundScheduler()
@@ -768,7 +816,7 @@ enum AccountState: Equatable {
                 self.siteInfo = siteInfo
                 self.hasStoredCredential = true
                 self.accountState = .connected
-                UserDefaults.standard.removeObject(forKey: Self.credentialExpiredKey)
+                Self.defaults.removeObject(forKey: Self.credentialExpiredKey)
                 self.notificationCoordinator.clearFailure()
                 self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
                 self.configureBackgroundScheduler()
@@ -795,10 +843,18 @@ enum AccountState: Equatable {
     }
 
     private static func storedRootID() -> UUID? {
-        UserDefaults.standard.string(forKey: rootIDKey).flatMap(UUID.init(uuidString:))
+        Self.defaults.string(forKey: rootIDKey).flatMap(UUID.init(uuidString:))
     }
 
     private static func databaseDirectory() throws -> URL {
+        guard !isUIPreview, !isUIPreviewOnboarding else {
+            // Same reasoning as `defaults`: don't let a manual preview run touch the real
+            // installed app's sync database. A fresh throwaway directory per launch also gives
+            // onboarding testing a clean "first install" every time.
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Beepbar-preview-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            return directory
+        }
         return try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
             .appendingPathComponent("Beepbar", isDirectory: true)
     }
@@ -851,7 +907,7 @@ enum AccountState: Equatable {
                 courseFolders[course.id] = defaults[course.id] ?? LocalPathPolicy.defaultCourseFolder(course.displayName)
             }
         }
-        UserDefaults.standard.set(enabledCourseIDs.map(String.init).sorted(), forKey: Self.enabledCoursesKey)
+        Self.defaults.set(enabledCourseIDs.map(String.init).sorted(), forKey: Self.enabledCoursesKey)
     }
 
     func folder(for course: RemoteCourseSummary) -> String {
@@ -1042,7 +1098,7 @@ enum AccountState: Equatable {
 
     private func expireCredential(notify: Bool = false) async {
         await credentialVault.invalidate()
-        UserDefaults.standard.set(true, forKey: Self.credentialExpiredKey)
+        Self.defaults.set(true, forKey: Self.credentialExpiredKey)
         accountState = .expired
         setSyncState(.failed(.authenticationExpired))
         if notify { await notificationCoordinator.notify(issue: .authenticationExpired) }
@@ -1251,27 +1307,122 @@ private enum AutomaticSyncOutcome {
 
 @MainActor final class LoginWindowController: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
     private enum Phase { case signingIn, launchingMobile, finished }
+    private static let entryURL = URL(string: "https://webeep.polimi.it/auth/shibboleth/index.php")!
+    private static let maximumAutomaticRetries = 2
     private var phase: Phase = .signingIn
     private var completion: ((Result<URL, LoginWindowError>) -> Void)?
     private let webView: WKWebView
+    private let retryButton: NSButton
+    private let waitingOverlay: NSView
+    private var automaticRetriesRemaining = LoginWindowController.maximumAutomaticRetries
 
     init(completion: @escaping (Result<URL, LoginWindowError>) -> Void) {
         self.completion = completion
         let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
         webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        retryButton = NSButton(title: "Ricarica", target: nil, action: nil)
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.bezelStyle = .rounded
+
+        let spinner = NSProgressIndicator(); spinner.style = .spinning; spinner.controlSize = .regular
+        spinner.startAnimation(nil); spinner.translatesAutoresizingMaskIntoConstraints = false
+        let waitingLabel = NSTextField(wrappingLabelWithString: "In attesa di risposta da WeBeep, può richiedere qualche secondo.\nSe il caricamento non va a buon fine, chiudi e riprova, oppure premi Ricarica.")
+        waitingLabel.alignment = .center; waitingLabel.textColor = .secondaryLabelColor
+        waitingLabel.translatesAutoresizingMaskIntoConstraints = false
+        let waitingStack = NSStackView(views: [spinner, waitingLabel])
+        waitingStack.orientation = .vertical; waitingStack.alignment = .centerX; waitingStack.spacing = 10
+        waitingStack.translatesAutoresizingMaskIntoConstraints = false
+        waitingOverlay = NSView()
+        waitingOverlay.addSubview(waitingStack)
+        NSLayoutConstraint.activate([
+            waitingStack.centerXAnchor.constraint(equalTo: waitingOverlay.centerXAnchor),
+            waitingStack.centerYAnchor.constraint(equalTo: waitingOverlay.centerYAnchor),
+            waitingLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 340),
+        ])
+
+        let container = NSView()
+        container.addSubview(webView); container.addSubview(waitingOverlay); container.addSubview(retryButton)
+        waitingOverlay.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: container.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            waitingOverlay.topAnchor.constraint(equalTo: container.topAnchor),
+            waitingOverlay.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            waitingOverlay.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            waitingOverlay.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            retryButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            retryButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+        ])
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 680), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Accesso WeBeep"; window.contentView = webView
+        window.title = "Accesso WeBeep"; window.contentView = container
         super.init(window: window); window.delegate = self; webView.navigationDelegate = self; webView.uiDelegate = self
+        retryButton.target = self; retryButton.action = #selector(retryTapped)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
-        webView.load(URLRequest(url: URL(string: "https://webeep.polimi.it/auth/shibboleth/index.php")!))
+        // Without this, an accessory (menu-bar-only) app can leave the window visible but not
+        // key: it draws on screen but doesn't actually own keyboard focus, so the WebView's
+        // fields silently reject typing and pasting.
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+        webView.load(URLRequest(url: Self.entryURL))
+    }
+
+    @objc private func retryTapped() {
+        automaticRetriesRemaining = Self.maximumAutomaticRetries
+        phase = .signingIn
+        waitingOverlay.isHidden = false
+        webView.load(URLRequest(url: Self.entryURL))
     }
 
     func windowWillClose(_ notification: Notification) { finish(.failure(.cancelled)) }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        waitingOverlay.isHidden = false
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        retryAutomaticallyOrGiveUp(error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        retryAutomaticallyOrGiveUp(error)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        automaticRetriesRemaining = Self.maximumAutomaticRetries
+        waitingOverlay.isHidden = true
+    }
+
+    // A first navigation attempt can occasionally fail outright (no network yet, DNS hiccup,
+    // etc), leaving a blank window with no feedback. Retrying automatically (plus always offering
+    // a one-click "Ricarica") means the user never has to close and reopen the whole window for
+    // that.
+    //
+    // Only ever retry on a genuine network failure (NSURLErrorDomain). decidePolicyFor below
+    // intentionally cancels navigations mid-flow — once to intercept the moodlemobile:// scheme,
+    // once to redirect into launch.php — and WKWebView reports each of those as a navigation
+    // "failure" too (WKErrorDomain, WKErrorFrameLoadInterruptedByPolicyChange). Retrying on those
+    // as well would restart the login from scratch every time it was about to succeed, which is
+    // exactly the infinite-reset loop this shipped with until caught.
+    private func retryAutomaticallyOrGiveUp(_ error: Error) {
+        guard phase != .finished else { return }
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain, nsError.code != NSURLErrorCancelled else { return }
+        guard automaticRetriesRemaining > 0 else { return }
+        automaticRetriesRemaining -= 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, self.phase != .finished else { return }
+            self.phase = .signingIn
+            self.webView.load(URLRequest(url: Self.entryURL))
+        }
+    }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }

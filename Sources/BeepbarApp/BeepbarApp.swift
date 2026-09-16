@@ -5,13 +5,27 @@ import os
 
 @main
 struct BeepbarApp: App {
-    @StateObject private var authentication = WeBeepAuthenticationController()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("Beepbar", systemImage: authentication.menuBarSymbol) {
-            MenuBarContent(authentication: authentication)
+        MenuBarExtra("Beepbar", systemImage: appDelegate.authentication.menuBarSymbol) {
+            MenuBarContent(authentication: appDelegate.authentication)
         }
         .menuBarExtraStyle(.menu)
+    }
+}
+
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
+    // Owned here, not by the SwiftUI App struct: for a MenuBarExtra-only scene (no
+    // WindowGroup), SwiftUI doesn't guarantee `body` runs before applicationDidFinishLaunching,
+    // so a reference handed over from `body` can still be nil when this fires. AppKit does
+    // guarantee the delegate itself is fully constructed and assigned before that call, so
+    // creating the controller here removes the race entirely.
+    let authentication = WeBeepAuthenticationController()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard authentication.needsOnboarding else { return }
+        ConfigurationWindowController.shared.show(authentication)
     }
 }
 
