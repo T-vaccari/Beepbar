@@ -97,16 +97,16 @@ jobs:
           SIGNATURE=$(echo "$SPARKLE_PRIVATE_KEY" | /tmp/sparkle-tools/bin/sign_update --ed-key-file - build/00-Beepbar.dmg -p)
           LENGTH=$(stat -f%z build/00-Beepbar.dmg)
           PUBDATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
-          PREVIOUS=$(git rev-list -n 1 latest 2>/dev/null || true)
-          if [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$GITHUB_SHA" ]; then
-            git log --pretty='- %s (`%h`)' "$PREVIOUS..$GITHUB_SHA" > release-notes.md
+          PREVIOUS_TAG=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          if [ -n "$PREVIOUS_TAG" ]; then
+            git log --pretty='- %s (`%h`)' "$PREVIOUS_TAG..$GITHUB_SHA" > release-notes.md
           else
             git log -1 --pretty='- %s (`%h`)' "$GITHUB_SHA" > release-notes.md
           fi
           cat > release-body.md <<BODYEOF
-          [**Download Beepbar for macOS**](https://github.com/${{ github.repository }}/releases/download/latest/00-Beepbar.dmg)
+          [**Download Beepbar for macOS**](https://github.com/${{ github.repository }}/releases/latest/download/00-Beepbar.dmg)
 
-          The DMG is built from \`main\` and updates automatically on every push.
+          Built automatically from \`main\` on every push. The link above always resolves to the newest release.
 
           Built from commit [\`${GITHUB_SHA}\`](https://github.com/${{ github.repository }}/commit/${GITHUB_SHA}). Ad-hoc signed, not notarized — see the [README](https://github.com/${{ github.repository }}#tldr--install) for the first-launch Gatekeeper step.
 
@@ -120,32 +120,28 @@ jobs:
             <channel>
               <title>Beepbar</title>
               <item>
-                <title>Latest build</title>
+                <title>Beepbar $SHORT_VERSION</title>
                 <pubDate>$PUBDATE</pubDate>
                 <sparkle:version>$SHORT_VERSION</sparkle:version>
                 <sparkle:shortVersionString>$SHORT_VERSION</sparkle:shortVersionString>
                 <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
                 <description sparkle:format="markdown"><![CDATA[[View the changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)]]></description>
-                <enclosure url="https://github.com/${{ github.repository }}/releases/download/latest/00-Beepbar.dmg" sparkle:version="$SHORT_VERSION" sparkle:edSignature="$SIGNATURE" length="$LENGTH" type="application/octet-stream"/>
+                <enclosure url="https://github.com/${{ github.repository }}/releases/download/v$FULL_VERSION/00-Beepbar.dmg" sparkle:version="$SHORT_VERSION" sparkle:edSignature="$SIGNATURE" length="$LENGTH" type="application/octet-stream"/>
               </item>
             </channel>
           </rss>
           XMLEOF
           ! grep -q 'sparkle:releaseNotesLink' appcast.xml
           grep -Fq '[View the changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)' appcast.xml
-      - name: Move latest tag to this commit
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git tag -f latest "$GITHUB_SHA"
-          git push -f origin latest
-      - name: Publish latest release
+      - name: Publish release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: Latest build
+          tag_name: v${{ env.FULL_VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: v${{ env.FULL_VERSION }}
           body_path: release-body.md
-          prerelease: true
+          prerelease: false
           make_latest: true
           files: |
             build/00-Beepbar.dmg
