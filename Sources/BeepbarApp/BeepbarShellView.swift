@@ -389,13 +389,25 @@ private struct SyncDetailPage: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List(summary.affectedCourses) { course in
-                        HStack {
-                            Text(course.courseFolder).font(.body.weight(.medium))
-                            Spacer()
-                            if course.added > 0 { Text(course.addedLabel).font(.caption).foregroundStyle(.secondary) }
-                            if course.updated > 0 { Text(course.updatedLabel).font(.caption).foregroundStyle(.secondary) }
+                        DisclosureGroup {
+                            ForEach(course.items) { item in
+                                HStack {
+                                    Image(systemName: item.kind == .added ? "plus.circle" : "arrow.triangle.2.circlepath")
+                                        .foregroundStyle(.secondary)
+                                    Text(item.name).font(.callout)
+                                    Spacer()
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        } label: {
+                            HStack {
+                                Text(course.courseFolder).font(.body.weight(.medium))
+                                Spacer()
+                                if course.added > 0 { Text(course.addedLabel).font(.caption).foregroundStyle(.secondary) }
+                                if course.updated > 0 { Text(course.updatedLabel).font(.caption).foregroundStyle(.secondary) }
+                            }
+                            .padding(.vertical, 3)
                         }
-                        .padding(.vertical, 3)
                     }
                 }
             } else {
