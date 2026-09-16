@@ -389,6 +389,7 @@ public actor FileStore {
                     next = openat(fd, component, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
                 }
                 guard next >= 0 else { throw fileStoreError() }
+                if component == ".beepbar" { fchflags(next, UInt32(UF_HIDDEN)) }
                 close(fd)
                 fd = next
             }

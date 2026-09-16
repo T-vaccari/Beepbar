@@ -1,9 +1,22 @@
 import CryptoKit
+import Darwin
 import Foundation
 import Testing
 @testable import BeepbarCore
 
 struct FileStoreTests {
+    @Test func hidesInternalBookkeepingDirectoryFromFinder() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try FileStore(root: root)
+        _ = try await store.createStage()
+
+        var info = stat()
+        let path = root.appending(path: ".beepbar").path
+        #expect(stat(path, &info) == 0)
+        #expect(info.st_flags & UInt32(UF_HIDDEN) != 0)
+    }
+
     @Test func installsOnlyWhenDestinationIsStillMissing() async throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
