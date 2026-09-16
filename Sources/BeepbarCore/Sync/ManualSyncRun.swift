@@ -12,20 +12,36 @@ public struct PreparedSyncItem: Sendable, Equatable, Identifiable {
     }
 }
 
+public struct SyncedItem: Sendable, Equatable, Codable, Identifiable, Hashable {
+    public enum Kind: Sendable, Equatable, Codable { case added, updated }
+
+    public let id: String
+    public let name: String
+    public let kind: Kind
+
+    public init(id: String, name: String, kind: Kind) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+    }
+}
+
 public struct CourseSyncCount: Sendable, Equatable, Codable, Identifiable {
     public let courseID: Int64
     public let courseFolder: String
     public let added: Int
     public let updated: Int
+    public let items: [SyncedItem]
 
     public var id: Int64 { courseID }
     public var total: Int { added + updated }
 
-    public init(courseID: Int64, courseFolder: String, added: Int, updated: Int) {
+    public init(courseID: Int64, courseFolder: String, added: Int, updated: Int, items: [SyncedItem] = []) {
         self.courseID = courseID
         self.courseFolder = courseFolder
         self.added = added
         self.updated = updated
+        self.items = items
     }
 }
 
@@ -110,6 +126,7 @@ public actor ManualSyncRun {
         var perCourseAdded: [Int64: Int] = [:]
         var perCourseUpdated: [Int64: Int] = [:]
         var perCourseFolder: [Int64: String] = [:]
+        var perCourseItems: [Int64: [SyncedItem]] = [:]
         let downloader = downloader ?? RemoteDownloader(maximumConnections: maximumConcurrentDownloads, allowsExpensiveNetworkAccess: allowsExpensiveNetworkAccess, policy: serverPolicy)
         try await withThrowingTaskGroup(of: (PreparedSyncItem, ManualSyncOutcome?).self) { group in
             var next = 0
@@ -148,32 +165,40 @@ public actor ManualSyncRun {
                     added += 1
                     perCourseAdded[courseID, default: 0] += 1
                     perCourseFolder[courseID] = Self.courseFolder(for: item.destination)
+                    perCourseItems[courseID, default: []].append(Self.syncedItem(for: item, kind: .added))
                 case .installedReplacing?:
                     updated += 1
                     perCourseUpdated[courseID, default: 0] += 1
                     perCourseFolder[courseID] = Self.courseFolder(for: item.destination)
+                    perCourseItems[courseID, default: []].append(Self.syncedItem(for: item, kind: .updated))
                 case .adoptedRemoteBaseline?: unchanged += 1
                 case .preservedLocal?: preservedLocal += 1
                 case .unchanged?, .skipped?: unchanged += 1
                 case .conflict?: conflicts += 1
                 case nil: failures += 1
                 }
-                await progress(SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures, perCourse: Self.snapshotPerCourse(added: perCourseAdded, updated: perCourseUpdated, folders: perCourseFolder)))
+                await progress(SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures, perCourse: Self.snapshotPerCourse(added: perCourseAdded, updated: perCourseUpdated, folders: perCourseFolder, items: perCourseItems)))
                 if next < items.count { enqueue(items[next]); next += 1 }
             }
         }
         try Task.checkCancellation()
-        return SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures, perCourse: Self.snapshotPerCourse(added: perCourseAdded, updated: perCourseUpdated, folders: perCourseFolder))
+        return SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures, perCourse: Self.snapshotPerCourse(added: perCourseAdded, updated: perCourseUpdated, folders: perCourseFolder, items: perCourseItems))
     }
 
     private static func courseFolder(for destination: RelativePath) -> String {
         destination.value.split(separator: "/", maxSplits: 1).first.map(String.init) ?? destination.value
     }
 
-    private static func snapshotPerCourse(added: [Int64: Int], updated: [Int64: Int], folders: [Int64: String]) -> [CourseSyncCount] {
+    private static func syncedItem(for item: PreparedSyncItem, kind: SyncedItem.Kind) -> SyncedItem {
+        let name = item.destination.value.split(separator: "/").last.map(String.init) ?? item.destination.value
+        return SyncedItem(id: item.id, name: name, kind: kind)
+    }
+
+    private static func snapshotPerCourse(added: [Int64: Int], updated: [Int64: Int], folders: [Int64: String], items: [Int64: [SyncedItem]]) -> [CourseSyncCount] {
         let ids = Set(added.keys).union(updated.keys)
         return ids.map { id in
-            CourseSyncCount(courseID: id, courseFolder: folders[id] ?? "", added: added[id] ?? 0, updated: updated[id] ?? 0)
+            let sortedItems = (items[id] ?? []).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            return CourseSyncCount(courseID: id, courseFolder: folders[id] ?? "", added: added[id] ?? 0, updated: updated[id] ?? 0, items: sortedItems)
         }.sorted { $0.courseFolder.localizedStandardCompare($1.courseFolder) == .orderedAscending }
     }
 }
