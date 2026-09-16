@@ -242,11 +242,15 @@ enum AccountState: Equatable {
             hasStoredCredential = true
             accountState = .connected
             rootURL = FileManager.default.temporaryDirectory
+            func mockItems(added: Int, updated: Int) -> [SyncedItem] {
+                (0..<added).map { SyncedItem(id: "a\($0)", name: "Slide \($0 + 1).pdf", kind: .added) }
+                    + (0..<updated).map { SyncedItem(id: "u\($0)", name: "Esercizi \($0 + 1).pdf", kind: .updated) }
+            }
             let mockPerCourse = [
-                CourseSyncCount(courseID: 1, courseFolder: "Corso di prova 1", added: 5, updated: 1),
-                CourseSyncCount(courseID: 7, courseFolder: "Corso di prova 7", added: 4, updated: 0),
-                CourseSyncCount(courseID: 23, courseFolder: "Corso di prova 23", added: 2, updated: 2),
-                CourseSyncCount(courseID: 41, courseFolder: "Corso di prova 41", added: 1, updated: 1),
+                CourseSyncCount(courseID: 1, courseFolder: "Corso di prova 1", added: 5, updated: 1, items: mockItems(added: 5, updated: 1)),
+                CourseSyncCount(courseID: 7, courseFolder: "Corso di prova 7", added: 4, updated: 0, items: mockItems(added: 4, updated: 0)),
+                CourseSyncCount(courseID: 23, courseFolder: "Corso di prova 23", added: 2, updated: 2, items: mockItems(added: 2, updated: 2)),
+                CourseSyncCount(courseID: 41, courseFolder: "Corso di prova 41", added: 1, updated: 1, items: mockItems(added: 1, updated: 1)),
             ]
             setSyncState(.synced(SyncCompletionSummary(completedAt: Date(), added: 12, updated: 4, unchanged: 83, preservedLocal: 1, conflicts: 0, failures: 0, perCourse: mockPerCourse)))
             return
