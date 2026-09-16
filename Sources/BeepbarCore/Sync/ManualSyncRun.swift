@@ -185,16 +185,16 @@ public actor ManualSyncRun {
         return SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures, perCourse: Self.snapshotPerCourse(added: perCourseAdded, updated: perCourseUpdated, folders: perCourseFolder, items: perCourseItems))
     }
 
-    private static func courseFolder(for destination: RelativePath) -> String {
+    static func courseFolder(for destination: RelativePath) -> String {
         destination.value.split(separator: "/", maxSplits: 1).first.map(String.init) ?? destination.value
     }
 
-    private static func syncedItem(for item: PreparedSyncItem, kind: SyncedItem.Kind) -> SyncedItem {
+    static func syncedItem(for item: PreparedSyncItem, kind: SyncedItem.Kind) -> SyncedItem {
         let name = item.destination.value.split(separator: "/").last.map(String.init) ?? item.destination.value
         return SyncedItem(id: item.id, name: name, kind: kind)
     }
 
-    private static func snapshotPerCourse(added: [Int64: Int], updated: [Int64: Int], folders: [Int64: String], items: [Int64: [SyncedItem]]) -> [CourseSyncCount] {
+    static func snapshotPerCourse(added: [Int64: Int], updated: [Int64: Int], folders: [Int64: String], items: [Int64: [SyncedItem]]) -> [CourseSyncCount] {
         let ids = Set(added.keys).union(updated.keys)
         return ids.map { id in
             let sortedItems = (items[id] ?? []).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }

@@ -8,20 +8,25 @@ struct BeepbarShellView: View {
     enum Page { case home, settings, conflicts, syncDetail }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            Group {
-                switch page {
-                case .home: HomePage(authentication: authentication, open: open)
-                case .settings: SettingsPage(authentication: authentication, back: { page = .home })
-                case .conflicts: ConflictsPage(authentication: authentication, back: { page = .home })
-                case .syncDetail: SyncDetailPage(authentication: authentication, back: { page = .home })
+        if authentication.needsOnboarding {
+            OnboardingView(authentication: authentication)
+                .frame(minWidth: 680, minHeight: 500)
+        } else {
+            VStack(spacing: 0) {
+                header
+                Divider()
+                Group {
+                    switch page {
+                    case .home: HomePage(authentication: authentication, open: open)
+                    case .settings: SettingsPage(authentication: authentication, back: { page = .home })
+                    case .conflicts: ConflictsPage(authentication: authentication, back: { page = .home })
+                    case .syncDetail: SyncDetailPage(authentication: authentication, back: { page = .home })
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(minWidth: 680, minHeight: 500)
         }
-        .frame(minWidth: 680, minHeight: 500)
     }
 
     private var header: some View {
