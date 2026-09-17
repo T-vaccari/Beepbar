@@ -11,6 +11,7 @@
 - Show the changes included in each GitHub release from Beepbar's update flow.
 - Stop re-reading every synced file on each sync; unchanged files are now checked without hashing, a synced path replaced by a folder no longer aborts the run, and a deleted file's name stays reserved for its own material.
 - Stop re-downloading locally edited files on every sync once the remote copy is unchanged.
+- Keep the course list responsive with many courses by caching default folder names.
 
 ## 2.0 beta
 
