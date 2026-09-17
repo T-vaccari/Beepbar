@@ -9,6 +9,7 @@
 - Keep the Sparkle update window compact and link directly to the changelog instead of embedding the GitHub release page.
 - Build CI releases with the same Xcode 27 toolchain used for local Release builds.
 - Show the changes included in each GitHub release from Beepbar's update flow.
+- Resolving a conflict with the remote version after another local edit no longer leaves a stale second conflict behind.
 
 ## 2.0 beta
 
