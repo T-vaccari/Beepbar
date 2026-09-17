@@ -6,10 +6,13 @@ public enum LocalPathPolicyError: Error, Sendable, Equatable {
 }
 
 public enum LocalPathPolicy {
+    // Compiled once: `defaultCourseFolder` runs for every course each time the folder map is
+    // rebuilt, and an `NSRegularExpression` is immutable, so one shared instance is safe.
+    private static let forkStyleCourseName = try? NSRegularExpression(pattern: "\\d+ - (.+) \\(.+\\)")
+
     public static func defaultCourseFolder(_ courseName: String) -> String {
-        let expression = try? NSRegularExpression(pattern: "\\d+ - (.+) \\(.+\\)")
         let range = NSRange(courseName.startIndex..., in: courseName)
-        if let match = expression?.firstMatch(in: courseName, range: range), let captured = Range(match.range(at: 1), in: courseName) {
+        if let match = forkStyleCourseName?.firstMatch(in: courseName, range: range), let captured = Range(match.range(at: 1), in: courseName) {
             return component(String(courseName[captured]))
         }
         return component(courseName)

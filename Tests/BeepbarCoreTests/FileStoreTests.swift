@@ -75,6 +75,27 @@ struct FileStoreTests {
         #expect(try await store.containsRegularFile(path))
     }
 
+    @Test func bulkExistenceCheckTreatsNonRegularEntriesAsAbsentWithoutHashing() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try FileStore(root: root)
+        let regular = try RelativePath("Course/material.txt")
+        let directory = try RelativePath("Course/folder.txt")
+        let symlink = try RelativePath("Course/link.txt")
+        let missing = try RelativePath("Course/missing.txt")
+        let underFile = try RelativePath("Course/material.txt/nested.txt")
+        let underSymlink = try RelativePath("Course/link.txt/nested.txt")
+        try FileManager.default.createDirectory(at: root.appending(path: "Course"), withIntermediateDirectories: true)
+        try Data("local".utf8).write(to: root.appending(path: regular.value))
+        try FileManager.default.createDirectory(at: root.appending(path: directory.value), withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: root.appending(path: symlink.value), withDestinationURL: root.appending(path: regular.value))
+
+        let existing = try await store.existingRegularFiles([regular, directory, symlink, missing, underFile, underSymlink])
+
+        #expect(existing == [regular])
+        #expect(await store.hashCount == 0)
+    }
+
     private func temporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

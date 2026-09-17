@@ -33,10 +33,12 @@ public actor ConflictResolver {
             let artifact = try await fileStore.copyConflictArtifactToStage(at: conflict.incomingPath, expectedSHA256: conflict.remoteSHA256)
             let coordinator = SyncTransactionCoordinator(database: database, fileStore: fileStore)
             let outcome = try await coordinator.install(rootID: conflict.rootID, remoteID: conflict.remoteID, destination: conflict.relativePath, expectedLocal: expectedLocal, remote: remote, artifact: artifact)
-            if outcome.isInstalled {
-                try await database.markResolved(id: conflict.id)
-                try await fileStore.discardConflictArtifact(at: conflict.incomingPath, expectedSHA256: conflict.remoteSHA256)
-            }
+            // Either the remote content is now installed, or the local file changed again after detection and the
+            // coordinator recorded a replacement conflict that carries the current local hash and its own copy of
+            // the remote content. In both cases this record and its artifact are superseded, so resolve them
+            // instead of leaving a second open conflict (and a second disk copy) for the same file.
+            try await database.markResolved(id: conflict.id)
+            try await fileStore.discardConflictArtifact(at: conflict.incomingPath, expectedSHA256: conflict.remoteSHA256)
             return outcome
         }
     }

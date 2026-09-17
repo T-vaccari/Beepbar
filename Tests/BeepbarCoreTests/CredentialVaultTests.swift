@@ -1,9 +1,9 @@
 import Foundation
-import XCTest
+import Testing
 @testable import BeepbarCore
 
-final class CredentialVaultTests: XCTestCase {
-    func testConcurrentLoadsReadSecretOnlyOnce() async throws {
+struct CredentialVaultTests {
+    @Test func concurrentLoadsReadSecretOnlyOnce() async throws {
         let store = TestCredentialStore(token: "token")
         let vault = CredentialVault(read: { _ in try store.read() }, write: { try store.write($0) })
 
@@ -12,43 +12,43 @@ final class CredentialVaultTests: XCTestCase {
             return try await group.reduce(into: []) { $0.append($1) }
         }
 
-        XCTAssertEqual(values, Array(repeating: "token", count: 20))
-        XCTAssertEqual(store.readCount, 1)
+        #expect(values == Array(repeating: "token", count: 20))
+        #expect(store.readCount == 1)
     }
 
-    func testSaveUpdatesCacheWithoutAnotherRead() async throws {
+    @Test func saveUpdatesCacheWithoutAnotherRead() async throws {
         let store = TestCredentialStore(token: "old")
         let vault = CredentialVault(read: { _ in try store.read() }, write: { try store.write($0) })
 
         try await vault.save("new")
         let token = try await vault.load()
-        XCTAssertEqual(token, "new")
-        XCTAssertEqual(store.readCount, 0)
-        XCTAssertEqual(store.token, "new")
+        #expect(token == "new")
+        #expect(store.readCount == 0)
+        #expect(store.token == "new")
     }
 
-    func testFailedReadIsNotCachedAndInvalidationForcesOneNewRead() async throws {
+    @Test func failedReadIsNotCachedAndInvalidationForcesOneNewRead() async throws {
         let store = TestCredentialStore(token: nil)
         let vault = CredentialVault(read: { _ in try store.read() }, write: { try store.write($0) })
 
-        await XCTAssertThrowsErrorAsync { _ = try await vault.load() }
+        await #expect(throws: TestCredentialError.absent) { _ = try await vault.load() }
         store.token = "first"
         let first = try await vault.load()
-        XCTAssertEqual(first, "first")
+        #expect(first == "first")
         await vault.invalidate()
         store.token = "second"
         let second = try await vault.load()
-        XCTAssertEqual(second, "second")
-        XCTAssertEqual(store.readCount, 3)
+        #expect(second == "second")
+        #expect(store.readCount == 3)
     }
 
-    func testNonInteractiveAccessIsForwardedToStore() async throws {
+    @Test func nonInteractiveAccessIsForwardedToStore() async throws {
         let access = AccessRecorder()
         let vault = CredentialVault(read: { mode in access.record(mode); return "token" }, write: { _ in })
 
         _ = try await vault.load(.nonInteractive)
 
-        XCTAssertEqual(access.last, .nonInteractive)
+        #expect(access.last == .nonInteractive)
     }
 }
 
@@ -86,15 +86,4 @@ private final class TestCredentialStore: @unchecked Sendable {
     func write(_ token: String) throws {
         lock.withLock { value = token }
     }
-}
-
-private func XCTAssertThrowsErrorAsync(
-    _ expression: @escaping () async throws -> Void,
-    file: StaticString = #filePath,
-    line: UInt = #line
-) async {
-    do {
-        try await expression()
-        XCTFail("Expected an error", file: file, line: line)
-    } catch {}
 }

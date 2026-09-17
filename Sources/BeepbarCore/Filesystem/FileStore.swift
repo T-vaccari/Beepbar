@@ -40,6 +40,9 @@ public enum TopLevelDirectoryState: Sendable, Equatable { case missing, director
 
 public actor FileStore {
     private let rootFD: Int32
+    /// Number of times a file's full contents were read to compute a SHA-256 digest.
+    /// Test instrumentation: lets tests prove that unchanged files are not re-read on every sync.
+    private(set) var hashCount = 0
 
     public init(root: URL) throws {
         let fd = open(root.standardizedFileURL.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
@@ -62,7 +65,7 @@ public actor FileStore {
         if fd < 0 { if errno == ENOENT { return .missing }; throw fileStoreError() }
         defer { close(fd) }
         try requireRegularFile(fd)
-        return .present(sha256: try Self.sha256(of: fd))
+        return .present(sha256: try sha256(of: fd))
     }
 
     public func containsRegularFile(_ path: RelativePath) throws -> Bool {
@@ -79,6 +82,37 @@ public actor FileStore {
         defer { close(fd) }
         try requireRegularFile(fd)
         return true
+    }
+
+    /// Returns the subset of `paths` that currently exist as regular files, using one `stat` per path and
+    /// never reading file contents. Directories, symbolic links and other non-regular entries, as well as
+    /// paths whose parent is missing or is no longer a directory, are reported as absent rather than thrown.
+    public func existingRegularFiles(_ paths: [RelativePath]) throws -> Set<RelativePath> {
+        var existing: Set<RelativePath> = []
+        for path in paths {
+            try Task.checkCancellation()
+            if try isRegularFile(at: path) { existing.insert(path) }
+        }
+        return existing
+    }
+
+    private func isRegularFile(at path: RelativePath) throws -> Bool {
+        let parentAndName: (Int32, String)
+        do {
+            parentAndName = try parentDirectory(for: path, create: false)
+        } catch FileStoreError.symbolicLink {
+            return false
+        } catch where errno == ENOENT || errno == ENOTDIR {
+            return false
+        }
+        let (parent, name) = parentAndName
+        defer { close(parent) }
+        var metadata = stat()
+        guard fstatat(parent, name, &metadata, AT_SYMLINK_NOFOLLOW) == 0 else {
+            if errno == ENOENT || errno == ENOTDIR { return false }
+            throw fileStoreError()
+        }
+        return (metadata.st_mode & S_IFMT) == S_IFREG
     }
 
     public func renameTopLevelDirectory(from old: String, to new: String) throws {
@@ -167,6 +201,7 @@ public actor FileStore {
             defer { try? handle.close() }
             var total: Int64 = 0
             var hasher = SHA256()
+            hashCount += 1
             while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
                 try Task.checkCancellation()
                 total += Int64(chunk.count)
@@ -201,7 +236,7 @@ public actor FileStore {
         let fd = try openStage(stage, in: staging, flags: O_RDONLY)
         defer { close(fd) }
         guard fsync(fd) == 0 else { throw fileStoreError() }
-        return StagedArtifact(name: stage.name, identity: stage.identity, stagePath: stage.relativePath, sha256: try Self.sha256(of: fd), size: try fileSize(of: fd))
+        return StagedArtifact(name: stage.name, identity: stage.identity, stagePath: stage.relativePath, sha256: try sha256(of: fd), size: try fileSize(of: fd))
     }
 
     public func install(_ artifact: StagedArtifact, at path: RelativePath, expectedLocal: LocalState) throws -> InstallResult {
@@ -229,7 +264,7 @@ public actor FileStore {
             if existing < 0 { if errno == ENOENT { return .localChanged }; throw fileStoreError() }
             defer { close(existing) }
             try requireRegularFile(existing)
-            guard try Self.sha256(of: existing) == expectedHash else { return .localChanged }
+            guard try sha256(of: existing) == expectedHash else { return .localChanged }
             guard renameatx_np(staging, artifact.name, destinationParent, destinationName, UInt32(RENAME_SWAP)) == 0 else {
                 if errno == ENOENT { return .localChanged }
                 throw fileStoreError()
@@ -239,7 +274,7 @@ public actor FileStore {
                 guard current >= 0 else { return false }
                 defer { close(current) }
                 try self.requireRegularFile(current)
-                guard try Self.sha256(of: current) == artifact.sha256 else { return false }
+                guard try self.sha256(of: current) == artifact.sha256 else { return false }
                 guard renameatx_np(staging, artifact.name, destinationParent, destinationName, UInt32(RENAME_SWAP)) == 0 else { throw self.fileStoreError() }
                 guard fsync(staging) == 0, fsync(destinationParent) == 0 else { throw self.fileStoreError() }
                 return true
@@ -249,7 +284,7 @@ public actor FileStore {
                 guard displacedFD >= 0 else { throw fileStoreError() }
                 defer { close(displacedFD) }
                 try requireRegularFile(displacedFD)
-                let displacedHash = try Self.sha256(of: displacedFD)
+                let displacedHash = try sha256(of: displacedFD)
                 guard displacedHash == expectedHash else {
                     guard try rollbackIfRemoteIsStillInstalled() else { throw FileStoreError.localChanged }
                     return .localChanged
@@ -269,7 +304,7 @@ public actor FileStore {
         defer { close(staging) }
         let stage = StageHandle(name: recovery.name, identity: recovery.identity, relativePath: recovery.relativePath)
         let fd = try openStage(stage, in: staging, flags: O_RDONLY)
-        let hash = try Self.sha256(of: fd)
+        let hash = try sha256(of: fd)
         close(fd)
         guard hash == recovery.sha256 else { throw FileStoreError.localChanged }
         guard unlinkat(staging, recovery.name, 0) == 0 else { throw fileStoreError() }
@@ -304,7 +339,7 @@ public actor FileStore {
         if fd < 0 { if errno == ENOENT { return nil }; throw fileStoreError() }
         defer { close(fd) }
         try requireRegularFile(fd)
-        return StagedArtifact(name: name, identity: try Self.identity(of: fd), stagePath: path, sha256: try Self.sha256(of: fd), size: try fileSize(of: fd))
+        return StagedArtifact(name: name, identity: try Self.identity(of: fd), stagePath: path, sha256: try sha256(of: fd), size: try fileSize(of: fd))
     }
 
     public func copyConflictArtifactToStage(at path: RelativePath, expectedSHA256: String) throws -> StagedArtifact {
@@ -366,7 +401,7 @@ public actor FileStore {
         if fd < 0 { if errno == ENOENT { return nil }; throw fileStoreError() }
         defer { close(fd) }
         try requireRegularFile(fd)
-        return StagedArtifact(name: components[2], identity: try Self.identity(of: fd), stagePath: path, sha256: try Self.sha256(of: fd), size: try fileSize(of: fd))
+        return StagedArtifact(name: components[2], identity: try Self.identity(of: fd), stagePath: path, sha256: try sha256(of: fd), size: try fileSize(of: fd))
     }
 
     private func parentDirectory(for path: RelativePath, create: Bool) throws -> (Int32, String) {
@@ -426,7 +461,8 @@ public actor FileStore {
         return FileIdentity(device: Int64(metadata.st_dev), inode: UInt64(metadata.st_ino))
     }
 
-    private static func sha256(of fd: Int32) throws -> String {
+    private func sha256(of fd: Int32) throws -> String {
+        hashCount += 1
         let duplicate = dup(fd)
         guard duplicate >= 0 else { throw FileStoreError.ioFailure }
         let handle = FileHandle(fileDescriptor: duplicate, closeOnDealloc: true)

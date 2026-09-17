@@ -23,7 +23,7 @@ public actor SyncCoordinator {
     private let rootID: UUID
     private let rootURL: URL
     private let database: SyncDatabase
-    private let fileStore: FileStore
+    let fileStore: FileStore
     private let gate: RootOperationGate
     private let apiClient: WeBeepAPIClient
     private let downloader: RemoteDownloader?
@@ -114,10 +114,21 @@ public actor SyncCoordinator {
                 if next < targets.count { enqueue(next); next += 1 }
             }
             var items: [PreparedSyncItem] = []
+            // A baseline still claimed by a remote item owns its path whether or not the local file
+            // survives, so a newcomer resolving to the same name gets a suffix instead of colliding.
+            // Unclaimed (ghost) baselines only keep their name while a regular file is still there.
+            let claimedIDs = Set(fetched.flatMap { $0.1.map(\.id) })
             var reservedPaths: Set<String> = []
-            for baseline in baselines.values {
-                guard case .present = try await fileStore.inspect(baseline.relativePath) else { continue }
-                reservedPaths.insert(baseline.relativePath.value.precomposedStringWithCanonicalMapping.lowercased())
+            var ghostPaths: [RelativePath] = []
+            for (remoteID, baseline) in baselines {
+                if claimedIDs.contains(remoteID) {
+                    reservedPaths.insert(Self.pathKey(baseline.relativePath))
+                } else {
+                    ghostPaths.append(baseline.relativePath)
+                }
+            }
+            for path in try await fileStore.existingRegularFiles(ghostPaths) {
+                reservedPaths.insert(Self.pathKey(path))
             }
             for (index, files) in fetched.sorted(by: { $0.0 < $1.0 }) {
                 for file in files {
@@ -138,20 +149,22 @@ public actor SyncCoordinator {
     }
 
     private func itemsRequiringReconciliation(_ items: [PreparedSyncItem], baselines: [String: Baseline]) async throws -> [PreparedSyncItem] {
-        var work: [PreparedSyncItem] = []
-        for item in items {
-            try Task.checkCancellation()
-            if let baseline = baselines[item.remote.id], baseline.remoteRevision == item.remote.observedRevision, try await fileStore.containsRegularFile(item.destination) { continue }
-            work.append(item)
+        func hasCurrentBaseline(_ item: PreparedSyncItem) -> Bool {
+            baselines[item.remote.id]?.remoteRevision == item.remote.observedRevision
         }
-        return work
+        let present = try await fileStore.existingRegularFiles(items.filter(hasCurrentBaseline).map(\.destination))
+        return items.filter { !(hasCurrentBaseline($0) && present.contains($0.destination)) }
     }
 
     private func validateNoDestinationCollisions(_ items: [PreparedSyncItem]) throws {
         var identifiersByPath: [String: Set<String>] = [:]
         for item in items {
-            identifiersByPath[item.destination.value.precomposedStringWithCanonicalMapping.lowercased(), default: []].insert(item.remote.id)
+            identifiersByPath[Self.pathKey(item.destination), default: []].insert(item.remote.id)
         }
         guard identifiersByPath.values.allSatisfy({ $0.count == 1 }) else { throw SyncDatabaseError.execution }
+    }
+
+    private static func pathKey(_ path: RelativePath) -> String {
+        path.value.precomposedStringWithCanonicalMapping.lowercased()
     }
 }
