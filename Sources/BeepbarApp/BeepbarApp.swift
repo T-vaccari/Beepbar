@@ -130,9 +130,6 @@ private struct BeepbarConfigurationView: View {
                 }
                 Button("Verifica") { authentication.validateConnection() }
                     .disabled(!authentication.hasStoredCredential || authentication.isAuthenticating || authentication.isVerifying)
-                if !authentication.hasStoredCredential {
-                    Button("Migra credenziale") { authentication.migrateLegacyCredential() }.disabled(authentication.isAuthenticating)
-                }
             }.padding(.top, 4)
         }
     }
