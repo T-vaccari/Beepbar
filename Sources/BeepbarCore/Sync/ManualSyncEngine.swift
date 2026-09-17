@@ -85,6 +85,11 @@ public actor ManualSyncEngine {
             return .unchanged
         case .preserveLocal:
             if let artifact { try await fileStore.discard(artifact) }
+            // The remote bytes still match the baseline, so only the revision moved. Catch the
+            // baseline up or the unchanged remote gets re-downloaded on every following run.
+            if let baseline, baseline.remoteRevision != remote.revision {
+                try await database.upsertBaseline(rootID: rootID, baseline: Baseline(remoteID: remoteID, relativePath: destination, sha256: baseline.sha256, remoteRevision: remote.revision))
+            }
             return .preservedLocal
         case .adoptRemoteBaseline:
             if let artifact { try await fileStore.discard(artifact) }
