@@ -88,7 +88,7 @@ enum AppSyncState: Equatable {
         case .conflicts(_, let summary): summary?.conflictDetail ?? "Scegli quale versione mantenere nella sezione Conflitti."
         case .partial(let summary): summary.partialDetail
         case .failed(let failure): failure.detail
-        case .recoveryBlocked: "Apri Beepbar per completare il recupero locale."
+        case .recoveryBlocked: "Il recupero locale non è stato completato. Riprova dal menu o scegli un'altra cartella."
         }
     }
 
@@ -293,32 +293,59 @@ enum AccountState: Equatable {
                 let result = try await bootstrap.prepare(databaseDirectory: Self.databaseDirectory(), rootURL: rootURL, rootID: rootID, gate: operationGate)
                 guard let self else { return }
                 self.database = result.database
-                if result.recoveryBlocked {
-                    self.recoveryBlocked = true
-                    self.setSyncState(.recoveryBlocked)
-                } else {
-                    switch result.credential {
-                    case .present:
-                        self.hasStoredCredential = true
-                        if Self.defaults.bool(forKey: Self.credentialExpiredKey) {
-                            self.accountState = .expired
-                            self.setSyncState(.failed(.authenticationExpired))
-                        } else {
-                            self.accountState = .connected
-                            await self.restorePersistedSyncState()
-                        }
-                        self.configureBackgroundScheduler()
-                    case .absent:
-                        self.hasStoredCredential = false
-                        self.accountState = .notConnected
-                        await self.restorePersistedSyncState()
-                        self.configureBackgroundScheduler()
-                    case .unavailable(let error):
-                        await self.handleKeychainError(error)
-                    }
-                }
+                await self.applyBootstrap(result)
             } catch {
                 self?.setSyncState(.failed(.local("Impossibile preparare lo stato locale. Riapri Beepbar.")))
+            }
+        }
+    }
+
+    /// Applies the outcome of the launch bootstrap or of a recovery retry. A blocked recovery keeps
+    /// every root operation gated; otherwise the account and the persisted sync state are restored.
+    private func applyBootstrap(_ result: BootstrapService.Result) async {
+        if result.recoveryBlocked {
+            recoveryBlocked = true
+            setSyncState(.recoveryBlocked)
+            return
+        }
+        recoveryBlocked = false
+        switch result.credential {
+        case .present:
+            hasStoredCredential = true
+            if Self.defaults.bool(forKey: Self.credentialExpiredKey) {
+                accountState = .expired
+                setSyncState(.failed(.authenticationExpired))
+            } else {
+                accountState = .connected
+                await restorePersistedSyncState()
+            }
+            configureBackgroundScheduler()
+        case .absent:
+            hasStoredCredential = false
+            accountState = .notConnected
+            await restorePersistedSyncState()
+            configureBackgroundScheduler()
+        case .unavailable(let error):
+            await handleKeychainError(error)
+        }
+    }
+
+    /// Re-runs the launch recovery for the current root without re-picking the folder, so a pending
+    /// operation that could not be recovered (for example after the user fixed the file on disk)
+    /// no longer keeps every sync blocked.
+    func retryRecovery() {
+        guard recoveryBlocked, case .recoveryBlocked = syncState, !isSyncActive, let rootURL, let rootID, let database else { return }
+        setSyncState(.starting)
+        let bootstrap = BootstrapService()
+        let operationGate = self.operationGate
+        Task { [weak self] in
+            let trace = PerformanceTrace.shared.begin("bootstrap.retryRecovery", category: .bootstrap)
+            defer { PerformanceTrace.shared.end("bootstrap.retryRecovery", category: .bootstrap, state: trace) }
+            do {
+                let result = try await bootstrap.retryRecovery(rootURL: rootURL, rootID: rootID, database: database, gate: operationGate)
+                await self?.applyBootstrap(result)
+            } catch {
+                self?.setSyncState(.recoveryBlocked)
             }
         }
     }
@@ -338,6 +365,7 @@ enum AccountState: Equatable {
         case .signIn: accountState == .expired ? "Accedi di nuovo" : "Accedi"
         case .authorizeKeychain: "Autorizza accesso"
         case .retryKeychain: "Riprova"
+        case .retryRecovery: "Riprova recupero"
         case .openSettings: "Apri Impostazioni"
         case .synchronize: "Sincronizza ora"
         }
@@ -356,6 +384,7 @@ enum AccountState: Equatable {
         }
         return MenuBarActionPolicy.action(
             syncActive: isSyncActive,
+            recoveryBlocked: recoveryBlocked,
             hasConflicts: !conflicts.isEmpty,
             account: account,
             hasRoot: rootURL != nil
@@ -414,6 +443,7 @@ enum AccountState: Equatable {
         case .openConflicts: ConflictWindowController.shared.show(self)
         case .signIn: startLogin()
         case .authorizeKeychain, .retryKeychain: validateConnection()
+        case .retryRecovery: retryRecovery()
         case .openSettings: ConfigurationWindowController.shared.show(self)
         case .synchronize: synchronizeNow()
         }
@@ -530,6 +560,7 @@ enum AccountState: Equatable {
             return
         }
 #endif
+        guard !recoveryBlocked else { setSyncState(.recoveryBlocked); return }
         let selected = courses.filter { enabledCourseIDs.contains($0.id) }
         guard !selected.isEmpty else { setSyncState(.readyUnchecked); return }
         guard let database else { return }
@@ -1199,18 +1230,33 @@ private actor BootstrapService {
         defer { PerformanceTrace.shared.end("bootstrap.databaseRecovery", category: .bootstrap, state: trace) }
         try FileManager.default.createDirectory(at: databaseDirectory, withIntermediateDirectories: true)
         let database = try SyncDatabase(url: databaseDirectory.appendingPathComponent("sync.sqlite"))
-        let credential: CredentialStatus
-        do {
-            credential = try KeychainTokenStore.containsCredential() ? .present : .absent
-        } catch let error as KeychainError {
-            credential = .unavailable(error)
-        }
+        let credential = try credentialStatus()
         guard let rootURL, let rootID else { return Result(database: database, recoveryBlocked: false, credential: credential) }
+        let blocked = try await recoveryBlocked(rootURL: rootURL, rootID: rootID, database: database, gate: gate)
+        return Result(database: database, recoveryBlocked: blocked, credential: credential)
+    }
+
+    /// Runs the same recovery as `prepare` on an already-open database, under the `.recovering` lease.
+    func retryRecovery(rootURL: URL, rootID: UUID, database: SyncDatabase, gate: RootOperationGate) async throws -> Result {
+        let credential = try credentialStatus()
+        let blocked = try await recoveryBlocked(rootURL: rootURL, rootID: rootID, database: database, gate: gate)
+        return Result(database: database, recoveryBlocked: blocked, credential: credential)
+    }
+
+    private func credentialStatus() throws -> CredentialStatus {
+        do {
+            return try KeychainTokenStore.containsCredential() ? .present : .absent
+        } catch let error as KeychainError {
+            return .unavailable(error)
+        }
+    }
+
+    private func recoveryBlocked(rootURL: URL, rootID: UUID, database: SyncDatabase, gate: RootOperationGate) async throws -> Bool {
         try await database.registerRoot(id: rootID, canonicalPath: rootURL.path)
         let report = try await gate.withLease(.recovering) {
             try await RecoveryCoordinator(rootID: rootID, database: database, fileStore: try FileStore(root: rootURL)).recover()
         }
-        return Result(database: database, recoveryBlocked: !report.unresolved.isEmpty, credential: credential)
+        return !report.unresolved.isEmpty
     }
 }
 

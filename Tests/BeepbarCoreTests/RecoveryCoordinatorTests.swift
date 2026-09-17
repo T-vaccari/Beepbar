@@ -123,6 +123,56 @@ struct RecoveryCoordinatorTests {
         #expect(try String(contentsOf: destination, encoding: .utf8) == "local")
     }
 
+    @Test func reportsBrokenOperationAsUnresolvedAndRecoversTheRest() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rootID = UUID()
+        let database = try SyncDatabase(url: root.appending(path: "state.sqlite"))
+        try await database.registerRoot(id: rootID, canonicalPath: root.path)
+        let store = try FileStore(root: root)
+        // A stage path outside `.beepbar/staging` makes `stagedArtifact` throw `.invalidStage`.
+        let broken = PendingOperation(rootID: rootID, remoteID: "broken", destination: try RelativePath("Course/broken.txt"), stagePath: try RelativePath("Course/broken.partial"), expectedLocal: .missing, remoteSHA256: hash("broken"), remoteRevision: "1")
+        try await database.beginOperation(broken)
+        let path = try RelativePath("Course/notes.txt")
+        let stage = try await store.createStage()
+        try await store.write(Data("remote".utf8), to: stage)
+        let artifact = try await store.finalize(stage)
+        let healthy = PendingOperation(rootID: rootID, remoteID: "file", destination: path, stagePath: artifact.stagePath, expectedLocal: .missing, remoteSHA256: artifact.sha256, remoteRevision: "2")
+        try await database.beginOperation(healthy)
+
+        let report = try await RecoveryCoordinator(rootID: rootID, database: database, fileStore: store).recover()
+        #expect(report.recovered == [healthy.id])
+        #expect(report.unresolved == [broken.id])
+        #expect(report.conflicts.isEmpty)
+        #expect(try String(contentsOf: root.appending(path: path.value), encoding: .utf8) == "remote")
+        #expect((try await database.pendingOperations(rootID: rootID)).map(\.id) == [broken.id])
+    }
+
+    @Test func reportsBrokenScopeMoveAsUnresolvedAndRecoversTheRest() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rootID = UUID()
+        let database = try SyncDatabase(url: root.appending(path: "state.sqlite"))
+        try await database.registerRoot(id: rootID, canonicalPath: root.path)
+        let store = try FileStore(root: root)
+        // A nested destination is not a top-level name, so `topLevelDirectoryState` throws `.invalidStage`.
+        let brokenIdentity = try await store.ensureTopLevelDirectory("Broken").identity
+        try await database.upsertScope(SyncScope(rootID: rootID, courseID: 1, displayName: "Broken", localFolder: "Broken", enabled: true, managedDirectory: brokenIdentity))
+        let broken = PendingScopeMove(id: UUID(), rootID: rootID, courseID: 1, oldFolder: "Broken", newFolder: "Nested/Broken")
+        try await database.beginScopeMove(broken)
+        let healthyIdentity = try await store.ensureTopLevelDirectory("Old").identity
+        try await database.upsertScope(SyncScope(rootID: rootID, courseID: 2, displayName: "Course", localFolder: "Old", enabled: true, managedDirectory: healthyIdentity))
+        let healthy = PendingScopeMove(id: UUID(), rootID: rootID, courseID: 2, oldFolder: "Old", newFolder: "New")
+        try await database.beginScopeMove(healthy)
+        try await store.renameTopLevelDirectory(from: "Old", to: "New")
+
+        let report = try await RecoveryCoordinator(rootID: rootID, database: database, fileStore: store).recover()
+        #expect(report.recovered == [healthy.id])
+        #expect(report.unresolved == [broken.id])
+        #expect(try await database.scope(rootID: rootID, courseID: 2)?.localFolder == "New")
+        #expect((try await database.pendingScopeMoves(rootID: rootID)).map(\.id) == [broken.id])
+    }
+
     private func temporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
