@@ -17,7 +17,7 @@
 ### Performance
 
 - The course list stays responsive with many courses. Showing a single row used to recompute the default folder name of every course, compiling regular expressions from scratch each time, which meant tens of thousands of recompilations per redraw with a large course list. Those names are now computed once and the regular expressions are compiled once for the lifetime of the app.
-- Repeated synchronizations no longer make Beepbar heavier over time. Each run opened a new set of network connections and kept them alive for as long as the app was running, so memory and open connections grew with every manual and scheduled sync. All runs now share a single connection pool.
+- Repeated synchronizations no longer make Beepbar heavier over time. Each run opened a new set of network connections and kept them alive for as long as the app was running, so memory and open connections grew with every manual and scheduled sync. All runs now share a single connection pool, and scheduled syncs keep staying off metered connections and honouring Low Data Mode exactly as before.
 
 ### Added and changed
 

@@ -168,7 +168,7 @@ import Testing
         func engine() -> ManualSyncEngine {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.protocolClasses = [IntegrationDownloadProtocol.self]
-            return ManualSyncEngine(rootID: rootID, database: database, fileStore: store, downloader: RemoteDownloader(session: URLSession(configuration: configuration)))
+            return ManualSyncEngine(rootID: rootID, database: database, fileStore: store, downloader: RemoteDownloader(session: URLSession(configuration: configuration)), networkAccess: .unrestricted)
         }
 
         func file(revision: String, size: Int64? = nil) -> RemoteFileCandidate {

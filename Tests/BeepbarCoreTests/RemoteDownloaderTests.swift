@@ -20,7 +20,7 @@ import Testing
             downloadURL: URL(string: "https://webeep.polimi.it/pluginfile.php/file")!,
             size: 1, modifiedAt: nil, observedRevision: "1", isSupported: true
         )
-        await #expect(throws: expected) { try await downloader.download(file, token: "token") }
+        await #expect(throws: expected) { try await downloader.download(file, token: "token", access: .unrestricted) }
     }
 
     @Test func removesTemporaryFileWhenResponseIsRejected() async throws {
@@ -35,7 +35,7 @@ import Testing
             size: 4, modifiedAt: nil, observedRevision: "1", isSupported: true
         )
         let before = Self.downloadTemporaryFiles()
-        await #expect(throws: RemoteDownloadError.transport(404)) { try await downloader.download(file, token: "token") }
+        await #expect(throws: RemoteDownloadError.transport(404)) { try await downloader.download(file, token: "token", access: .unrestricted) }
         #expect(Self.leakedDownloadTemporaries(since: before, body: DownloadRejectedProtocol.body).isEmpty)
     }
 

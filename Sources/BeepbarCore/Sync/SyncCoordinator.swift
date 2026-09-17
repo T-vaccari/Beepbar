@@ -16,6 +16,9 @@ public enum SyncCoordinatorMode: Sendable {
 
     var metadataConcurrency: Int { self == .manual ? 3 : 2 }
     var downloadConcurrency: Int { self == .manual ? 3 : 2 }
+    // A scheduled run happens behind the user's back: it must not pull material over a metered
+    // hotspot, and it has to honour Low Data Mode.
+    var networkAccess: NetworkAccess { self == .manual ? .unrestricted : .background }
 }
 
 public actor SyncCoordinator {
@@ -69,7 +72,7 @@ public actor SyncCoordinator {
             work = try await itemsRequiringReconciliation(items, baselines: baselines)
         }
         guard !work.isEmpty else { return SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0) }
-        let runner = ManualSyncRun(rootID: rootID, database: database, fileStore: fileStore, gate: gate, downloader: downloader, maximumConcurrentDownloads: mode.downloadConcurrency)
+        let runner = ManualSyncRun(rootID: rootID, database: database, fileStore: fileStore, gate: gate, downloader: downloader, networkAccess: mode.networkAccess, maximumConcurrentDownloads: mode.downloadConcurrency)
         do {
             return try await runner.startWithinLease(items: work, token: token, progress: progress)
         } catch SyncDownloadError.authorizationRejected(let status) {

@@ -15,13 +15,15 @@ public actor ManualSyncEngine {
     private let database: SyncDatabase
     private let fileStore: FileStore
     private let downloader: RemoteDownloader
+    private let networkAccess: NetworkAccess
     private let transactions: SyncTransactionCoordinator
 
-    public init(rootID: UUID, database: SyncDatabase, fileStore: FileStore, downloader: RemoteDownloader) {
+    public init(rootID: UUID, database: SyncDatabase, fileStore: FileStore, downloader: RemoteDownloader, networkAccess: NetworkAccess) {
         self.rootID = rootID
         self.database = database
         self.fileStore = fileStore
         self.downloader = downloader
+        self.networkAccess = networkAccess
         transactions = SyncTransactionCoordinator(database: database, fileStore: fileStore)
     }
 
@@ -38,7 +40,7 @@ public actor ManualSyncEngine {
         }
 
         try Task.checkCancellation()
-        let downloaded = try await downloader.download(file, token: token)
+        let downloaded = try await downloader.download(file, token: token, access: networkAccess)
         // The import copies the body out of the temporary file, so nothing else ever removes it.
         defer { try? FileManager.default.removeItem(at: downloaded.temporaryURL) }
         try Task.checkCancellation()
@@ -67,7 +69,7 @@ public actor ManualSyncEngine {
             return try await apply(SyncPlanner.decide(baseline: baseline, local: local, remote: RemoteState(sha256: baseline.sha256, revision: file.observedRevision)), remoteID: file.id, baseline: baseline, destination: destination, local: local, remote: RemoteState(sha256: baseline.sha256, revision: file.observedRevision), artifact: nil)
         }
         try Task.checkCancellation()
-        let downloaded = try await downloader.download(file, token: token)
+        let downloaded = try await downloader.download(file, token: token, access: networkAccess)
         // The import copies the body out of the temporary file, so nothing else ever removes it.
         defer { try? FileManager.default.removeItem(at: downloaded.temporaryURL) }
         try Task.checkCancellation()

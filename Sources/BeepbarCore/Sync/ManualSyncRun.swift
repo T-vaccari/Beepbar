@@ -86,14 +86,16 @@ public actor ManualSyncRun {
     private let gate: RootOperationGate
     private let maximumConcurrentDownloads: Int
     private let downloader: RemoteDownloader
+    private let networkAccess: NetworkAccess
 
-    public init(rootID: UUID, database: SyncDatabase, fileStore: FileStore, gate: RootOperationGate, downloader: RemoteDownloader, maximumConcurrentDownloads: Int = 3) {
+    public init(rootID: UUID, database: SyncDatabase, fileStore: FileStore, gate: RootOperationGate, downloader: RemoteDownloader, networkAccess: NetworkAccess, maximumConcurrentDownloads: Int = 3) {
         self.rootID = rootID
         self.database = database
         self.fileStore = fileStore
         self.gate = gate
         self.maximumConcurrentDownloads = maximumConcurrentDownloads
         self.downloader = downloader
+        self.networkAccess = networkAccess
     }
 
     public func start(items: [PreparedSyncItem], token: String, progress: @escaping @Sendable (SyncProgress) async -> Void) async throws -> SyncProgress {
@@ -126,9 +128,9 @@ public actor ManualSyncRun {
         try await withThrowingTaskGroup(of: (PreparedSyncItem, ManualSyncOutcome?).self) { group in
             var next = 0
             func enqueue(_ item: PreparedSyncItem) {
-                group.addTask { [rootID, database, fileStore, downloader] in
+                group.addTask { [rootID, database, fileStore, downloader, networkAccess] in
                     do {
-                        let engine = ManualSyncEngine(rootID: rootID, database: database, fileStore: fileStore, downloader: downloader)
+                        let engine = ManualSyncEngine(rootID: rootID, database: database, fileStore: fileStore, downloader: downloader, networkAccess: networkAccess)
                         return (item, try await engine.sync(file: item.remote, destination: item.destination, token: token))
                     } catch is CancellationError {
                         throw CancellationError()
