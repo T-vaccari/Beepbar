@@ -9,6 +9,7 @@
 - Keep the Sparkle update window compact and link directly to the changelog instead of embedding the GitHub release page.
 - Build CI releases with the same Xcode 27 toolchain used for local Release builds.
 - Show the changes included in each GitHub release from Beepbar's update flow.
+- Keep the course list responsive with many courses by caching default folder names.
 
 ## 2.0 beta
 

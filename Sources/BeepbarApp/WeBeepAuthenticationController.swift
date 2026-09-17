@@ -186,7 +186,9 @@ enum AccountState: Equatable {
     @Published private(set) var isAuthenticating = false
     @Published private(set) var isVerifying = false
     @Published private(set) var isLoadingCourses = false
-    @Published private(set) var courses: [RemoteCourseSummary] = []
+    @Published private(set) var courses: [RemoteCourseSummary] = [] {
+        didSet { defaultCourseFolders = Self.defaultFolders(for: courses) }
+    }
     @Published private(set) var selectedCourse: RemoteCourseSummary?
     @Published private(set) var contents: RemoteCourseContents?
     @Published private(set) var isLoadingContents = false
@@ -207,6 +209,10 @@ enum AccountState: Equatable {
     let progressStore = SyncProgressStore()
     @Published private(set) var conflicts: [ConflictRecord] = []
     @Published private(set) var resolvingConflictID: UUID?
+    // Default folder name per course id, derived from `courses` and rebuilt only when that list
+    // changes: `folder(for:)` runs for every row on every render of the course list, so it has
+    // to be a lookup, not a rescan of every course name.
+    private var defaultCourseFolders: [Int64: String] = [:]
     private var loginWindow: LoginWindowController?
     private var siteInfo: WeBeepSiteInfo?
     private var database: SyncDatabase?
@@ -921,7 +927,7 @@ enum AccountState: Equatable {
     }
 
     private func defaultFolder(for course: RemoteCourseSummary) -> String {
-        Self.defaultFolders(for: courses)[course.id] ?? LocalPathPolicy.defaultCourseFolder(course.displayName)
+        defaultCourseFolders[course.id] ?? LocalPathPolicy.defaultCourseFolder(course.displayName)
     }
 
     static func orderedForDisplay(_ courses: [RemoteCourseSummary], enabledCourseIDs: Set<Int64>) -> [RemoteCourseSummary] {
@@ -933,7 +939,9 @@ enum AccountState: Equatable {
         }
     }
 
-    private static func defaultFolders(for courses: [RemoteCourseSummary]) -> [Int64: String] {
+    // Pure and independently testable: the default folder for each course, falling back to the
+    // full course name when two courses would otherwise share the same folder.
+    nonisolated static func defaultFolders(for courses: [RemoteCourseSummary]) -> [Int64: String] {
         let names = Dictionary(grouping: courses, by: { LocalPathPolicy.defaultCourseFolder($0.displayName).precomposedStringWithCanonicalMapping.lowercased() })
         return Dictionary(uniqueKeysWithValues: courses.map { course in
             let base = LocalPathPolicy.defaultCourseFolder(course.displayName)

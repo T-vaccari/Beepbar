@@ -358,11 +358,17 @@ private func bounded(_ value: String?) -> String? {
 }
 
 public enum MoodleText {
+    // Compiled once: `normalized` runs for every section and module name of every course on
+    // every sync, and an `NSRegularExpression` is immutable, so one shared instance is safe.
+    private static let multilangExpression = try? NSRegularExpression(
+        pattern: #"\{mlang\s+([^}]+)\}([\s\S]*?)\{mlang\}"#,
+        options: [.caseInsensitive]
+    )
+
     public static func normalized(_ value: String?) -> String? {
         guard let value = bounded(value) else { return nil }
         let decoded = decodedHTMLEntities(value)
-        let pattern = #"\{mlang\s+([^}]+)\}([\s\S]*?)\{mlang\}"#
-        guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+        guard let expression = multilangExpression else {
             return bounded(decoded)
         }
         let range = NSRange(decoded.startIndex..., in: decoded)
