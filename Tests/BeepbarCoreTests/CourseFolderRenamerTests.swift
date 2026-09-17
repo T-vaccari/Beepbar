@@ -130,6 +130,64 @@ struct CourseFolderRenamerTests {
         #expect(try await database.scope(rootID: rootID, courseID: 1)?.localFolder == "Old")
     }
 
+    @Test func refusesToRenameOntoAnExistingFolderAndKeepsTheCourseRenameable() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rootID = UUID()
+        let database = try SyncDatabase(url: root.appending(path: "state.sqlite"))
+        try await database.registerRoot(id: rootID, canonicalPath: root.path)
+        let store = try FileStore(root: root)
+        let identity = try await store.ensureTopLevelDirectory("Old").identity
+        try await database.upsertScope(SyncScope(rootID: rootID, courseID: 1, displayName: "Course", localFolder: "Old", enabled: true, managedDirectory: identity))
+        _ = try await store.ensureTopLevelDirectory("Taken")
+        let renamer = CourseFolderRenamer(database: database, fileStore: store, gate: RootOperationGate())
+
+        await #expect(throws: CourseRenameError.folderAlreadyExists) {
+            try await renamer.rename(rootID: rootID, courseID: 1, from: "Old", to: "Taken")
+        }
+        #expect(CourseRenameError.folderAlreadyExists.errorDescription == "Esiste già una cartella con questo nome.")
+        #expect(try await database.pendingScopeMoves().isEmpty)
+        #expect(try await database.scope(rootID: rootID, courseID: 1)?.localFolder == "Old")
+
+        try await renamer.rename(rootID: rootID, courseID: 1, from: "Old", to: "New")
+        #expect(try await database.scope(rootID: rootID, courseID: 1)?.localFolder == "New")
+    }
+
+    @Test func rollsBackThePendingMoveWhenTheDirectoryRenameFails() async throws {
+        let root = try temporaryRoot()
+        let databaseDirectory = try temporaryRoot()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: databaseDirectory)
+        }
+        let rootID = UUID()
+        let database = try SyncDatabase(url: databaseDirectory.appending(path: "state.sqlite"))
+        try await database.registerRoot(id: rootID, canonicalPath: root.path)
+        let store = try FileStore(root: root)
+        let identity = try await store.ensureTopLevelDirectory("Old").identity
+        try await database.upsertScope(SyncScope(rootID: rootID, courseID: 1, displayName: "Course", localFolder: "Old", enabled: true, managedDirectory: identity))
+        let renamer = CourseFolderRenamer(database: database, fileStore: store, gate: RootOperationGate())
+
+        // A read-only sync root lets every check pass and makes the directory rename itself fail,
+        // which is the moment the pending row has already been written.
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
+        await #expect(throws: (any Error).self) {
+            try await renamer.rename(rootID: rootID, courseID: 1, from: "Old", to: "New")
+        }
+        #expect(try await database.pendingScopeMoves().isEmpty)
+        #expect(try await database.scope(rootID: rootID, courseID: 1)?.localFolder == "Old")
+
+        let report = try await RecoveryCoordinator(rootID: rootID, database: database, fileStore: store).recover()
+        #expect(report.unresolved.isEmpty)
+
+        // The course is still renameable once the cause of the failure is gone.
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        try await renamer.rename(rootID: rootID, courseID: 1, from: "Old", to: "New")
+        #expect(try await database.scope(rootID: rootID, courseID: 1)?.localFolder == "New")
+        #expect(try await database.pendingScopeMoves().isEmpty)
+    }
+
     private func temporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

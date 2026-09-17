@@ -554,7 +554,7 @@ enum AccountState: Equatable {
                 try await renamer.rename(rootID: rootID, courseID: course.id, from: oldFolder, to: trimmedFolder)
                 self.courseFolders[course.id] = trimmedFolder
             } catch {
-                self?.courseRenameErrors[course.id] = "Rinomina non riuscita."
+                self?.courseRenameErrors[course.id] = (error as? CourseRenameError)?.errorDescription ?? "Rinomina non riuscita."
             }
         }
     }
