@@ -16,7 +16,6 @@ public enum SyncCoordinatorMode: Sendable {
 
     var metadataConcurrency: Int { self == .manual ? 3 : 2 }
     var downloadConcurrency: Int { self == .manual ? 3 : 2 }
-    var allowsExpensiveNetworkAccess: Bool { self == .manual }
 }
 
 public actor SyncCoordinator {
@@ -26,9 +25,9 @@ public actor SyncCoordinator {
     let fileStore: FileStore
     private let gate: RootOperationGate
     private let apiClient: WeBeepAPIClient
-    private let downloader: RemoteDownloader?
+    private let downloader: RemoteDownloader
 
-    public init(rootID: UUID, rootURL: URL, database: SyncDatabase, gate: RootOperationGate, apiClient: WeBeepAPIClient, downloader: RemoteDownloader? = nil) throws {
+    public init(rootID: UUID, rootURL: URL, database: SyncDatabase, gate: RootOperationGate, apiClient: WeBeepAPIClient, downloader: RemoteDownloader) throws {
         self.rootID = rootID
         self.rootURL = rootURL
         self.database = database
@@ -70,7 +69,7 @@ public actor SyncCoordinator {
             work = try await itemsRequiringReconciliation(items, baselines: baselines)
         }
         guard !work.isEmpty else { return SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0) }
-        let runner = ManualSyncRun(rootID: rootID, database: database, fileStore: fileStore, gate: gate, maximumConcurrentDownloads: mode.downloadConcurrency, allowsExpensiveNetworkAccess: mode.allowsExpensiveNetworkAccess, serverPolicy: apiClient.policy, downloader: downloader)
+        let runner = ManualSyncRun(rootID: rootID, database: database, fileStore: fileStore, gate: gate, downloader: downloader, maximumConcurrentDownloads: mode.downloadConcurrency)
         do {
             return try await runner.startWithinLease(items: work, token: token, progress: progress)
         } catch SyncDownloadError.authorizationRejected(let status) {

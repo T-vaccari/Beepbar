@@ -17,7 +17,7 @@ public actor ManualSyncEngine {
     private let downloader: RemoteDownloader
     private let transactions: SyncTransactionCoordinator
 
-    public init(rootID: UUID, database: SyncDatabase, fileStore: FileStore, downloader: RemoteDownloader = RemoteDownloader()) {
+    public init(rootID: UUID, database: SyncDatabase, fileStore: FileStore, downloader: RemoteDownloader) {
         self.rootID = rootID
         self.database = database
         self.fileStore = fileStore
@@ -39,6 +39,8 @@ public actor ManualSyncEngine {
 
         try Task.checkCancellation()
         let downloaded = try await downloader.download(file, token: token)
+        // The import copies the body out of the temporary file, so nothing else ever removes it.
+        defer { try? FileManager.default.removeItem(at: downloaded.temporaryURL) }
         try Task.checkCancellation()
         let artifact = try await fileStore.importDownloadedFile(at: downloaded.temporaryURL, expectedSize: downloaded.expectedSize, maximumSize: 1_073_741_824)
         let remote = RemoteState(sha256: artifact.sha256, revision: file.observedRevision)
@@ -66,6 +68,8 @@ public actor ManualSyncEngine {
         }
         try Task.checkCancellation()
         let downloaded = try await downloader.download(file, token: token)
+        // The import copies the body out of the temporary file, so nothing else ever removes it.
+        defer { try? FileManager.default.removeItem(at: downloaded.temporaryURL) }
         try Task.checkCancellation()
         let artifact = try await fileStore.importDownloadedFile(at: downloaded.temporaryURL, expectedSize: downloaded.expectedSize, maximumSize: 1_073_741_824)
         let remote = RemoteState(sha256: artifact.sha256, revision: file.observedRevision)

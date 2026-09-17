@@ -218,6 +218,9 @@ enum AccountState: Equatable {
     private var database: SyncDatabase?
     private let operationGate = RootOperationGate()
     private let apiClient: WeBeepAPIClient
+    // One downloader for the whole app lifetime: a per-run one would leave its URLSession and
+    // delegate alive forever, since nothing invalidates them when a run ends.
+    private let downloader: RemoteDownloader
     private let credentialVault = CredentialVault(read: KeychainTokenStore.load, write: KeychainTokenStore.save)
     private let notificationCoordinator = SyncNotificationCoordinator()
     private var backgroundScheduler: NSBackgroundActivityScheduler?
@@ -249,6 +252,7 @@ enum AccountState: Equatable {
         automaticDailyCheckTime = Self.dailyTime(Self.defaults.object(forKey: Self.autoSyncDailyTimeKey) as? Int)
         rootID = Self.storedRootID()
         apiClient = WeBeepAPIClient()
+        downloader = RemoteDownloader(policy: apiClient.policy)
         database = nil
         super.init()
 #if DEBUG
@@ -577,12 +581,13 @@ enum AccountState: Equatable {
         setSyncState(.checking)
         let targets = selected.map { SyncTarget(courseID: $0.id, localFolder: folder(for: $0)) }
         let apiClient = self.apiClient
+        let downloader = self.downloader
         let gate = operationGate
         syncTask = Task { [weak self] in
             do {
                 guard let self else { return }
                 let token = try await self.credentialVault.load()
-                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient)
+                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient, downloader: downloader)
                 await self.beginTransfer(operationID, automatic: false)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .manual) { [weak self] progress in
                     await self?.progressStore.publish(progress)
@@ -1058,12 +1063,13 @@ enum AccountState: Equatable {
         guard activeOperationID == operationID else { return .cancelled }
         let targets = automaticScopes.map { SyncTarget(courseID: $0.courseID, localFolder: $0.localFolder) }
         let apiClient = self.apiClient
+        let downloader = self.downloader
         let gate = operationGate
         let task = Task { [weak self] in
             do {
                 guard let self else { return }
                 let token = try await self.credentialVault.load(.nonInteractive)
-                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient)
+                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient, downloader: downloader)
                 await self.beginTransfer(operationID, automatic: true)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .automatic) { [weak self] progress in
                     await self?.progressStore.publish(progress)

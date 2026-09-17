@@ -19,6 +19,7 @@ public final class RemoteDownloader: @unchecked Sendable {
     private let session: URLSession
     private let maximumSize: Int64
     private let policy: WeBeepServerPolicy
+    private let ownsSession: Bool
 
     public init(maximumSize: Int64 = 1_073_741_824, maximumConnections: Int = 3, allowsExpensiveNetworkAccess: Bool = true, policy: WeBeepServerPolicy = .production) {
         self.maximumSize = maximumSize
@@ -31,12 +32,20 @@ public final class RemoteDownloader: @unchecked Sendable {
         configuration.allowsExpensiveNetworkAccess = allowsExpensiveNetworkAccess
         configuration.allowsConstrainedNetworkAccess = allowsExpensiveNetworkAccess
         session = URLSession(configuration: configuration, delegate: DownloadRejectRedirects(), delegateQueue: nil)
+        ownsSession = true
     }
 
     public init(session: URLSession, maximumSize: Int64 = 1_073_741_824, policy: WeBeepServerPolicy = .production) {
         self.session = session
         self.maximumSize = maximumSize
         self.policy = policy
+        ownsSession = false
+    }
+
+    deinit {
+        // A session started here retains its delegate until it is invalidated, so a downloader that
+        // is simply dropped would leak the session, its delegate and its connections.
+        if ownsSession { session.finishTasksAndInvalidate() }
     }
 
     public func download(_ file: RemoteFileCandidate, token: String) async throws -> DownloadedRemoteFile {
@@ -49,11 +58,17 @@ public final class RemoteDownloader: @unchecked Sendable {
         catch let error as URLError where error.code == .badServerResponse { throw RemoteDownloadError.unexpectedRedirect }
         catch let error as URLError { throw RemoteDownloadError.network(NetworkFailure(error.code)) }
         catch { throw RemoteDownloadError.invalidResponse }
-        guard let http = response as? HTTPURLResponse else { throw RemoteDownloadError.invalidResponse }
-        guard http.statusCode == 200 else { throw RemoteDownloadError.transport(http.statusCode) }
-        guard let finalURL = http.url, Self.matchesAuthorizedURL(finalURL, requestURL: request.url!) else { throw RemoteDownloadError.unexpectedRedirect }
+        // Every rejection below happens with the body already on disk: drop it, or a refused
+        // download stays in the temporary directory until the next reboot.
+        func reject(_ error: RemoteDownloadError) -> RemoteDownloadError {
+            try? FileManager.default.removeItem(at: temporaryURL)
+            return error
+        }
+        guard let http = response as? HTTPURLResponse else { throw reject(.invalidResponse) }
+        guard http.statusCode == 200 else { throw reject(.transport(http.statusCode)) }
+        guard let finalURL = http.url, Self.matchesAuthorizedURL(finalURL, requestURL: request.url!) else { throw reject(.unexpectedRedirect) }
         let length = http.expectedContentLength
-        if length >= 0, length != file.size { throw RemoteDownloadError.invalidResponse }
+        if length >= 0, length != file.size { throw reject(.invalidResponse) }
         return DownloadedRemoteFile(temporaryURL: temporaryURL, expectedSize: file.size)
     }
 
