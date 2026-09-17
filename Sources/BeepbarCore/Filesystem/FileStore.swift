@@ -411,7 +411,7 @@ public actor FileStore {
     }
 
     private func isSafeTopLevelName(_ name: String) -> Bool {
-        !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.utf8.contains(0) && !name.hasPrefix(".beepbar")
+        !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.utf8.contains(0) && !ReservedNamespace.isReservedTopLevelName(name)
     }
 
     private func directoryFD(for components: [String], create: Bool) throws -> Int32 {

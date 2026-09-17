@@ -10,7 +10,8 @@ public actor CourseFolderRenamer {
     }
 
     public func rename(rootID: UUID, courseID: Int64, from oldFolder: String, to newFolder: String) async throws {
-        guard oldFolder != newFolder, oldFolder.localizedCaseInsensitiveCompare(newFolder) != .orderedSame else { throw FileStoreError.invalidStage }
+        guard oldFolder != newFolder, oldFolder.localizedCaseInsensitiveCompare(newFolder) != .orderedSame,
+              !ReservedNamespace.isReservedTopLevelName(newFolder) else { throw FileStoreError.invalidStage }
         try await gate.withLease(.renaming(courseID)) { [database, fileStore] in
             guard !(try await database.hasOpenConflicts(rootID: rootID, prefix: oldFolder)),
                   !(try await database.hasPendingOperations(rootID: rootID, prefix: oldFolder)),

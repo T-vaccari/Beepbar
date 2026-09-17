@@ -540,7 +540,7 @@ enum AccountState: Equatable {
         guard let rootURL, let rootID, let database, !recoveryBlocked, !isSyncActive else { return }
         let oldFolder = folder(for: course)
         let trimmedFolder = newFolder.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedFolder.isEmpty else {
+        guard !trimmedFolder.isEmpty, !ReservedNamespace.isReservedTopLevelName(trimmedFolder) else {
             courseRenameErrors[course.id] = "Nome cartella non valido."
             return
         }

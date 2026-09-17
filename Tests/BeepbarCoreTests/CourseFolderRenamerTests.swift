@@ -111,6 +111,25 @@ struct CourseFolderRenamerTests {
         #expect(FileManager.default.fileExists(atPath: root.appending(path: "Old").path))
     }
 
+    @Test func refusesToRenameIntoTheReservedNamespace() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rootID = UUID()
+        let database = try SyncDatabase(url: root.appending(path: "state.sqlite"))
+        try await database.registerRoot(id: rootID, canonicalPath: root.path)
+        let store = try FileStore(root: root)
+        let identity = try await store.ensureTopLevelDirectory("Old").identity
+        try await database.upsertScope(SyncScope(rootID: rootID, courseID: 1, displayName: "Course", localFolder: "Old", enabled: true, managedDirectory: identity))
+        let renamer = CourseFolderRenamer(database: database, fileStore: store, gate: RootOperationGate())
+        await #expect(throws: FileStoreError.invalidStage) {
+            try await renamer.rename(rootID: rootID, courseID: 1, from: "Old", to: ".BEEPBAR")
+        }
+        #expect(FileManager.default.fileExists(atPath: root.appending(path: "Old").path))
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: ".BEEPBAR").path))
+        #expect(try await database.pendingScopeMoves().isEmpty)
+        #expect(try await database.scope(rootID: rootID, courseID: 1)?.localFolder == "Old")
+    }
+
     private func temporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

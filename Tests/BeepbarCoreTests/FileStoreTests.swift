@@ -96,6 +96,20 @@ struct FileStoreTests {
         #expect(await store.hashCount == 0)
     }
 
+    @Test func refusesTopLevelNamesInTheReservedNamespaceRegardlessOfCase() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try FileStore(root: root)
+        for name in [".BEEPBAR", ".Beepbar", ".BEEPBAR-backup"] {
+            await #expect(throws: FileStoreError.invalidStage) { _ = try await store.ensureTopLevelDirectory(name) }
+            await #expect(throws: FileStoreError.invalidStage) { _ = try await store.topLevelDirectoryIdentity(name) }
+            await #expect(throws: FileStoreError.invalidStage) { _ = try await store.topLevelDirectoryState(name) }
+        }
+        _ = try await store.ensureTopLevelDirectory("Corso")
+        await #expect(throws: FileStoreError.invalidStage) { try await store.renameTopLevelDirectory(from: "Corso", to: ".BEEPBAR") }
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: ".BEEPBAR").path))
+    }
+
     private func temporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
