@@ -13,6 +13,8 @@
 - Local recovery no longer stops at the first entry it cannot repair. A single damaged item used to abort recovery completely, and because recovery gates every other operation this blocked all synchronization, conflict resolution and folder renaming. The remaining items are now recovered normally and only the damaged one stays pending.
 - When recovery does remain blocked, the menu bar now offers to retry it, and the message explains what to do. The only way out used to be choosing a different sync folder, which nothing on screen mentioned. Starting a synchronization while recovery is blocked is now refused explicitly instead of silently doing nothing.
 - Synchronization no longer fills the disk with leftover downloads. Every downloaded file was copied into place but its temporary copy was never removed, so a large sync could quietly take up twice the space it reported, and refused or interrupted downloads left their own leftovers behind; nothing cleaned them up until the Mac was restarted.
+- A course whose material carries an implausible modification date no longer makes Beepbar quit in the middle of a synchronization, on that run and on every retry. That single entry is now reported as unreadable and the rest of the course is synchronized normally.
+- Duplicate entries coming from WeBeep or from the local database no longer make Beepbar quit while preparing a synchronization or while restoring your course selection; the first entry is kept and the run continues.
 
 ### Performance
 

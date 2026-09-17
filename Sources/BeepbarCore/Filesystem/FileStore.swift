@@ -46,7 +46,8 @@ public actor FileStore {
 
     public init(root: URL) throws {
         let fd = open(root.standardizedFileURL.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
-        guard fd >= 0, (try? Self.identity(of: fd)) != nil else { throw FileStoreError.invalidRoot }
+        guard fd >= 0 else { throw FileStoreError.invalidRoot }
+        guard (try? Self.identity(of: fd)) != nil else { close(fd); throw FileStoreError.invalidRoot }
         rootFD = fd
     }
 

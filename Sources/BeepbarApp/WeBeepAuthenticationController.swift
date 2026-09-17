@@ -911,7 +911,7 @@ enum AccountState: Equatable {
         guard let database, let rootID else { return }
         guard let scopes = try? await database.scopes(rootID: rootID) else { return }
         let remoteIDs = Set(courses.map(\.id))
-        let scopesByCourse = Dictionary(uniqueKeysWithValues: scopes.map { ($0.courseID, $0) })
+        let scopesByCourse = Dictionary(scopes.map { ($0.courseID, $0) }, uniquingKeysWith: { first, _ in first })
         let defaults = Self.defaultFolders(for: courses)
         enabledCourseIDs = Set(scopes.lazy.filter { $0.enabled && remoteIDs.contains($0.courseID) }.map(\.courseID))
         for course in courses {
@@ -979,11 +979,11 @@ enum AccountState: Equatable {
     // full course name when two courses would otherwise share the same folder.
     nonisolated static func defaultFolders(for courses: [RemoteCourseSummary]) -> [Int64: String] {
         let names = Dictionary(grouping: courses, by: { LocalPathPolicy.defaultCourseFolder($0.displayName).precomposedStringWithCanonicalMapping.lowercased() })
-        return Dictionary(uniqueKeysWithValues: courses.map { course in
+        return Dictionary(courses.map { course -> (Int64, String) in
             let base = LocalPathPolicy.defaultCourseFolder(course.displayName)
             let duplicate = (names[base.precomposedStringWithCanonicalMapping.lowercased()]?.count ?? 0) > 1
             return (course.id, duplicate ? LocalPathPolicy.component(course.displayName) : base)
-        })
+        }, uniquingKeysWith: { first, _ in first })
     }
 
     private func finishReconciliation(progress: SyncProgress) async {
