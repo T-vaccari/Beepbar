@@ -13,6 +13,7 @@
 - Stop re-downloading locally edited files on every sync once the remote copy is unchanged.
 - Keep the course list responsive with many courses by caching default folder names.
 - Treat database read errors as errors instead of acting on a partial view of the synchronization state.
+- Resolving a conflict with the remote version after another local edit no longer leaves a stale second conflict behind.
 
 ## 2.0 beta
 
