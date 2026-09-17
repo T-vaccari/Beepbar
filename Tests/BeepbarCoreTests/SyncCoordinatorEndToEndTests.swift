@@ -199,6 +199,60 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lezioni/0 (1).txt").path))
     }
 
+    @Test func secondRunWithNothingChangedDoesNotHashAnyFile() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.synchronize()
+        let hashesAfterFirstRun = await fixture.coordinator.fileStore.hashCount
+        #expect(hashesAfterFirstRun > 0)
+
+        let second = try await fixture.synchronize()
+
+        #expect(second.total == 0)
+        #expect(await fixture.coordinator.fileStore.hashCount == hashesAfterFirstRun)
+    }
+
+    @Test func syncedPathReplacedByDirectoryDoesNotAbortTheRun() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        _ = try await fixture.synchronize(targets: [target])
+        let remoteID = fixture.remoteID(course: 1, file: 0)
+        let baseline = try #require(await fixture.database.baseline(rootID: fixture.rootID, remoteID: remoteID))
+        let destination = fixture.root.appending(path: baseline.relativePath.value)
+        try FileManager.default.removeItem(at: destination)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+        fixture.upstream.setFile(course: 1, file: 1, value: "remote update", revision: "2")
+
+        let result = try await fixture.synchronize(targets: [target])
+
+        #expect(result.total == 2)
+        #expect(result.updated == 1)
+        #expect(result.failures == 1)
+        #expect(try destination.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true)
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: remoteID) == baseline)
+    }
+
+    @Test func deletedLocalFileKeepsItsNameReservedForItsOwnRemoteItem() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        _ = try await fixture.synchronize(targets: [target])
+        let baseline = try #require(await fixture.database.baseline(rootID: fixture.rootID, remoteID: fixture.remoteID(course: 1, file: 0)))
+        let destination = fixture.root.appending(path: baseline.relativePath.value)
+        try FileManager.default.removeItem(at: destination)
+        fixture.upstream.addFile(course: 1, file: 100, filename: "0.txt", value: "newcomer", revision: "1")
+
+        let result = try await fixture.synchronize(targets: [target])
+        let newcomer = try #require(await fixture.database.baseline(rootID: fixture.rootID, remoteID: fixture.remoteID(course: 1, file: 100)))
+
+        #expect(result.added == 2)
+        #expect(result.failures == 0)
+        #expect(try newcomer.relativePath == RelativePath("Course 1/Lezioni/0 (1).txt"))
+        #expect(try Data(contentsOf: destination) == Data("x".utf8))
+        #expect(try Data(contentsOf: fixture.root.appending(path: newcomer.relativePath.value)) == Data("newcomer".utf8))
+    }
+
     @Test func changedLocalAndRemoteFileConflictsAtTrackedLegacyDestination() async throws {
         let fixture = try await Fixture()
         defer { fixture.remove() }
@@ -367,7 +421,7 @@ private final class ProgressRecorder: @unchecked Sendable {
 }
 
 private final class MutableFixtureUpstream: @unchecked Sendable {
-    private struct File { var value: Data; var revision: String; var status = 200 }
+    private struct File { var value: Data; var revision: String; var status = 200; var filename: String? = nil }
     private let lock = NSLock()
     private var files: [Int64: [Int: File]] = [:]
     private var downloads = 0
@@ -397,6 +451,9 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
         }
     }
     func setStatus(course: Int64, file: Int, status: Int) { lock.withLock { guard var value = files[course]?[file] else { return }; value.status = status; files[course]?[file] = value } }
+    func addFile(course: Int64, file: Int, filename: String, value: String, revision: String) {
+        lock.withLock { files[course, default: [:]][file] = File(value: Data(value.utf8), revision: revision, filename: filename) }
+    }
 
     func response(for request: URLRequest) -> (HTTPURLResponse, Data, TimeInterval, Bool) {
         lock.withLock {
@@ -435,7 +492,7 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
         let contents: [[String: Any]] = values.keys.sorted().compactMap { index in
             guard let file = values[index] else { return nil }
             let contentHash = String(repeating: file.revision == "1" ? "a" : "b", count: 40)
-            return ["type": "file", "filename": "\(index).txt", "filepath": "/", "filesize": file.value.count, "timemodified": 1, "contenthash": contentHash, "fileurl": "https://fixture.beepbar.test/webservice/pluginfile.php/\(course)/\(index).txt"]
+            return ["type": "file", "filename": file.filename ?? "\(index).txt", "filepath": "/", "filesize": file.value.count, "timemodified": 1, "contenthash": contentHash, "fileurl": "https://fixture.beepbar.test/webservice/pluginfile.php/\(course)/\(index).txt"]
         }
         return try! JSONSerialization.data(withJSONObject: [["id": course, "name": "Materiali", "modules": [["id": course * 100, "name": "Lezioni", "modname": "folder", "contents": contents]]]])
     }
