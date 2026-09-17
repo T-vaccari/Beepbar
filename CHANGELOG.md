@@ -12,10 +12,12 @@
 - Choosing "Usa versione remota" for a file you had edited again in the meantime no longer leaves a stale second conflict behind. Exactly one conflict remains open for that file, reflecting the current contents on disk.
 - Local recovery no longer stops at the first entry it cannot repair. A single damaged item used to abort recovery completely, and because recovery gates every other operation this blocked all synchronization, conflict resolution and folder renaming. The remaining items are now recovered normally and only the damaged one stays pending.
 - When recovery does remain blocked, the menu bar now offers to retry it, and the message explains what to do. The only way out used to be choosing a different sync folder, which nothing on screen mentioned. Starting a synchronization while recovery is blocked is now refused explicitly instead of silently doing nothing.
+- Synchronization no longer fills the disk with leftover downloads. Every downloaded file was copied into place but its temporary copy was never removed, so a large sync could quietly take up twice the space it reported, and refused or interrupted downloads left their own leftovers behind; nothing cleaned them up until the Mac was restarted.
 
 ### Performance
 
 - The course list stays responsive with many courses. Showing a single row used to recompute the default folder name of every course, compiling regular expressions from scratch each time, which meant tens of thousands of recompilations per redraw with a large course list. Those names are now computed once and the regular expressions are compiled once for the lifetime of the app.
+- Repeated synchronizations no longer make Beepbar heavier over time. Each run opened a new set of network connections and kept them alive for as long as the app was running, so memory and open connections grew with every manual and scheduled sync. All runs now share a single connection pool, and scheduled syncs keep staying off metered connections and honouring Low Data Mode exactly as before.
 
 ### Added and changed
 
