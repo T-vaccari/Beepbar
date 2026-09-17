@@ -179,50 +179,20 @@ enum KeychainTokenStore {
     }
 }
 
-enum CredentialMigrationOutcome: Equatable {
-    case migrated
-    case notNeeded
-    case noLegacyCredential
-    case migrationFailed
-}
-
-/// Pure decision logic, independent of the Keychain/file system, so it can be unit tested with
-/// fakes the way `CredentialVault` already is.
-enum CredentialMigration {
-    static func run(
-        fileHasCredential: () throws -> Bool,
-        loadFromKeychain: () throws -> String,
-        saveToFile: (String) throws -> Void,
-        deleteFromKeychain: () -> Void
-    ) -> CredentialMigrationOutcome {
-        if let hasFile = try? fileHasCredential(), hasFile {
-            return .notNeeded
-        }
-        guard let token = try? loadFromKeychain() else {
-            return .noLegacyCredential
-        }
-        do {
-            try saveToFile(token)
-        } catch {
-            return .migrationFailed
-        }
-        deleteFromKeychain()
-        return .migrated
-    }
-}
-
 enum ProductionCredentialMigration {
-    static func run() -> CredentialMigrationOutcome {
+    /// Runs through `vault` (the same `CredentialVault` actor `login`/`save` use) rather than
+    /// touching `FileTokenStore` directly, so this can never race a concurrent login: see
+    /// `CredentialVault.migrateFromLegacyStore`.
+    static func run(vault: CredentialVault) async -> CredentialMigrationOutcome {
         // Redirecting FileTokenStore to an isolated directory during preview builds (see
         // `FileTokenStore.applicationSupportDirectory()`) only protects where a *copy* lands —
         // it does nothing to stop this migration from reading and then deleting the developer's
         // real Keychain item. Skip the whole migration outright in that case.
         guard !PreviewMode.isActive else { return .notNeeded }
-        return CredentialMigration.run(
-            fileHasCredential: FileTokenStore.containsCredential,
-            loadFromKeychain: KeychainTokenStore.loadAnyCredential,
-            saveToFile: FileTokenStore.save,
-            deleteFromKeychain: KeychainTokenStore.deleteAllCredentials
+        return await vault.migrateFromLegacyStore(
+            destinationAlreadyHasCredential: FileTokenStore.containsCredential,
+            loadFromLegacyStore: KeychainTokenStore.loadAnyCredential,
+            deleteFromLegacyStore: KeychainTokenStore.deleteAllCredentials
         )
     }
 }

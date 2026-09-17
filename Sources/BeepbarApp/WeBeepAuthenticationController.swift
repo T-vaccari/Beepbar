@@ -292,11 +292,12 @@ enum AccountState: Equatable {
         let rootURL = self.rootURL
         let rootID = self.rootID
         let operationGate = self.operationGate
+        let credentialVault = self.credentialVault
         Task { [weak self] in
             let trace = PerformanceTrace.shared.begin("bootstrap.total", category: .bootstrap)
             defer { PerformanceTrace.shared.end("bootstrap.total", category: .bootstrap, state: trace) }
             do {
-                let result = try await bootstrap.prepare(databaseDirectory: Self.databaseDirectory(), rootURL: rootURL, rootID: rootID, gate: operationGate)
+                let result = try await bootstrap.prepare(databaseDirectory: Self.databaseDirectory(), rootURL: rootURL, rootID: rootID, gate: operationGate, credentialVault: credentialVault)
                 guard let self else { return }
                 self.database = result.database
                 await self.applyBootstrap(result)
@@ -1211,12 +1212,12 @@ private actor BootstrapService {
         case unavailable(KeychainError)
     }
 
-    func prepare(databaseDirectory: URL, rootURL: URL?, rootID: UUID?, gate: RootOperationGate) async throws -> Result {
+    func prepare(databaseDirectory: URL, rootURL: URL?, rootID: UUID?, gate: RootOperationGate, credentialVault: CredentialVault) async throws -> Result {
         let trace = PerformanceTrace.shared.begin("bootstrap.databaseRecovery", category: .bootstrap)
         defer { PerformanceTrace.shared.end("bootstrap.databaseRecovery", category: .bootstrap, state: trace) }
         try FileManager.default.createDirectory(at: databaseDirectory, withIntermediateDirectories: true)
         let database = try SyncDatabase(url: databaseDirectory.appendingPathComponent("sync.sqlite"))
-        _ = ProductionCredentialMigration.run()
+        _ = await ProductionCredentialMigration.run(vault: credentialVault)
         let credential = try credentialStatus()
         guard let rootURL, let rootID else { return Result(database: database, recoveryBlocked: false, credential: credential) }
         let blocked = try await recoveryBlocked(rootURL: rootURL, rootID: rootID, database: database, gate: gate)
