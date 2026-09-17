@@ -1,0 +1,161 @@
+import Foundation
+import SQLite3
+import Testing
+@testable import BeepbarCore
+
+struct SyncDatabaseTests {
+    /// Every read must surface a failing `sqlite3_step` as an error. Dropping the table through a second
+    /// connection leaves the first connection's cached schema intact, so `sqlite3_prepare_v2` still succeeds
+    /// and the failure only shows up at step time, which is the path `SQLITE_BUSY`/`IOERR`/`CORRUPT` take.
+    @Test(arguments: ReadCase.all) func readThrowsWhenSteppingFails(_ readCase: ReadCase) async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "state.sqlite")
+        let rootID = UUID()
+        let database = try SyncDatabase(url: url)
+        try await database.registerRoot(id: rootID, canonicalPath: root.path)
+        try await readCase.read(database, rootID)
+
+        try RawSQLite(url: url).execute("DROP TABLE \(readCase.table)")
+
+        await #expect(throws: SyncDatabaseError.execution) {
+            try await readCase.read(database, rootID)
+        }
+    }
+
+    @Test func writeWaitsForABusyDatabaseInsteadOfFailingImmediately() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "state.sqlite")
+        let rootID = UUID()
+        let database = try SyncDatabase(url: url)
+        try await database.registerRoot(id: rootID, canonicalPath: root.path)
+        let baseline = Baseline(remoteID: "file", relativePath: try RelativePath("Course/notes.txt"), sha256: "abc", remoteRevision: "1")
+
+        let writer = try RawSQLite(url: url)
+        try writer.execute("BEGIN IMMEDIATE")
+        let write = Task { try await database.upsertBaseline(rootID: rootID, baseline: baseline) }
+        try await Task.sleep(for: .milliseconds(300))
+        try writer.execute("COMMIT")
+
+        try await write.value
+        #expect(try await database.baselines(rootID: rootID) == ["file": baseline])
+    }
+
+    @Test func reopeningMigratesIdempotentlyAndKeepsData() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "state.sqlite")
+        let rootID = UUID()
+        let baseline = Baseline(remoteID: "file", relativePath: try RelativePath("Course/notes.txt"), sha256: "abc", remoteRevision: "1")
+        do {
+            let database = try SyncDatabase(url: url)
+            try await database.registerRoot(id: rootID, canonicalPath: root.path)
+            try await database.upsertBaseline(rootID: rootID, baseline: baseline)
+        }
+
+        let reopened = try SyncDatabase(url: url)
+        try await reopened.migrate()
+
+        #expect(try await reopened.rootID(canonicalPath: root.path) == rootID)
+        #expect(try await reopened.baselines(rootID: rootID) == ["file": baseline])
+    }
+
+    @Test func conflictsTableIsIndexedForOpenConflictLookups() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "state.sqlite")
+        _ = try SyncDatabase(url: url)
+
+        let raw = try RawSQLite(url: url)
+        let indexes = try raw.query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'conflicts'")
+        #expect(indexes.contains("conflicts_root_remote_status"))
+        #expect(try raw.query("SELECT name FROM pragma_index_info('conflicts_root_remote_status') ORDER BY seqno") == ["root_id", "remote_id", "status"])
+        let plan = try raw.query("EXPLAIN QUERY PLAN SELECT 1 FROM conflicts WHERE root_id = 'r' AND remote_id = 'f' AND remote_revision = '1' AND status = 'open' LIMIT 1", column: 3)
+        #expect(plan.contains { $0.contains("USING INDEX conflicts_root_remote_status") }, "plan: \(plan)")
+    }
+
+    @Test func scopeLookupReturnsOnlyTheMatchingRow() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = try SyncDatabase(url: root.appending(path: "state.sqlite"))
+        let firstRoot = UUID(), secondRoot = UUID()
+        try await database.registerRoot(id: firstRoot, canonicalPath: root.path)
+        try await database.registerRoot(id: secondRoot, canonicalPath: root.appending(path: "other").path)
+        let managed = SyncScope(rootID: firstRoot, courseID: 1, displayName: "Analisi", localFolder: "Analisi", enabled: true, managedDirectory: DirectoryIdentity(device: 7, inode: 42))
+        let disabled = SyncScope(rootID: firstRoot, courseID: 2, displayName: "Fisica", localFolder: "Fisica", enabled: false)
+        let otherRoot = SyncScope(rootID: secondRoot, courseID: 1, displayName: "Analisi (bis)", localFolder: "Analisi bis", enabled: true)
+        for scope in [managed, disabled, otherRoot] { try await database.upsertScope(scope) }
+
+        #expect(try await database.scope(rootID: firstRoot, courseID: 1) == managed)
+        #expect(try await database.scope(rootID: firstRoot, courseID: 2) == disabled)
+        #expect(try await database.scope(rootID: secondRoot, courseID: 1) == otherRoot)
+        #expect(try await database.scope(rootID: firstRoot, courseID: 3) == nil)
+        #expect(try await database.scope(rootID: UUID(), courseID: 1) == nil)
+    }
+
+    private func temporaryRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+}
+
+struct ReadCase: Sendable, CustomTestStringConvertible {
+    let name: String
+    let table: String
+    let read: @Sendable (SyncDatabase, UUID) async throws -> Void
+
+    var testDescription: String { name }
+
+    static let all: [ReadCase] = [
+        ReadCase(name: "rootID", table: "roots") { database, _ in _ = try await database.rootID(canonicalPath: "/nowhere") },
+        ReadCase(name: "baseline", table: "items") { database, rootID in _ = try await database.baseline(rootID: rootID, remoteID: "file") },
+        ReadCase(name: "baselines", table: "items") { database, rootID in _ = try await database.baselines(rootID: rootID) },
+        ReadCase(name: "scopes", table: "sync_scopes") { database, rootID in _ = try await database.scopes(rootID: rootID) },
+        ReadCase(name: "scope", table: "sync_scopes") { database, rootID in _ = try await database.scope(rootID: rootID, courseID: 1) },
+        ReadCase(name: "scopeFolder", table: "sync_scopes") { database, rootID in _ = try await database.scopeFolder(rootID: rootID, courseID: 1) },
+        ReadCase(name: "conflicts", table: "conflicts") { database, rootID in _ = try await database.conflicts(rootID: rootID) },
+        ReadCase(name: "conflict", table: "conflicts") { database, _ in _ = try await database.conflict(id: UUID()) },
+        ReadCase(name: "hasOpenConflict", table: "conflicts") { database, rootID in _ = try await database.hasOpenConflict(rootID: rootID, remoteID: "file", revision: "1") },
+        ReadCase(name: "hasOpenConflicts", table: "conflicts") { database, rootID in _ = try await database.hasOpenConflicts(rootID: rootID, prefix: "Course") },
+        ReadCase(name: "pendingOperations", table: "pending_operations") { database, rootID in _ = try await database.pendingOperations(rootID: rootID) },
+        ReadCase(name: "hasPendingOperations", table: "pending_operations") { database, rootID in _ = try await database.hasPendingOperations(rootID: rootID, prefix: "Course") },
+        ReadCase(name: "pendingScopeMoves", table: "pending_scope_moves") { database, rootID in _ = try await database.pendingScopeMoves(rootID: rootID) },
+        ReadCase(name: "trackedItemCount", table: "items") { database, rootID in _ = try await database.trackedItemCount(rootID: rootID, prefix: "Course") },
+    ]
+}
+
+/// A second, independent connection to the same file, used to change the database behind `SyncDatabase`'s back.
+private final class RawSQLite {
+    struct Failure: Error { let message: String }
+
+    private var handle: OpaquePointer?
+
+    init(url: URL) throws {
+        guard sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
+            defer { sqlite3_close(handle) }
+            throw Failure(message: String(cString: sqlite3_errmsg(handle)))
+        }
+    }
+
+    deinit { sqlite3_close(handle) }
+
+    func execute(_ sql: String) throws {
+        guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else { throw Failure(message: String(cString: sqlite3_errmsg(handle))) }
+    }
+
+    func query(_ sql: String, column: Int32 = 0) throws -> [String] {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK, let statement else { throw Failure(message: String(cString: sqlite3_errmsg(handle))) }
+        defer { sqlite3_finalize(statement) }
+        var rows: [String] = []
+        while true {
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW: rows.append(sqlite3_column_text(statement, column).map { String(cString: $0) } ?? "")
+            case SQLITE_DONE: return rows
+            default: throw Failure(message: String(cString: sqlite3_errmsg(handle)))
+            }
+        }
+    }
+}

@@ -9,6 +9,7 @@
 - Keep the Sparkle update window compact and link directly to the changelog instead of embedding the GitHub release page.
 - Build CI releases with the same Xcode 27 toolchain used for local Release builds.
 - Show the changes included in each GitHub release from Beepbar's update flow.
+- Treat database read errors as errors instead of acting on a partial view of the synchronization state.
 
 ## 2.0 beta
 

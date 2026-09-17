@@ -16,6 +16,17 @@ private final class SQLiteHandle: @unchecked Sendable {
     deinit { sqlite3_close(pointer) }
 }
 
+/// Advances `statement` by one row: `true` on `SQLITE_ROW`, `false` on `SQLITE_DONE`. Any other result
+/// (`SQLITE_BUSY`, `SQLITE_IOERR`, `SQLITE_CORRUPT`, `SQLITE_FULL`, ...) is an error and must never be
+/// mistaken for the end of the result set, or callers would act on a truncated view of the database.
+private func stepRow(_ statement: OpaquePointer) throws -> Bool {
+    switch sqlite3_step(statement) {
+    case SQLITE_ROW: return true
+    case SQLITE_DONE: return false
+    default: throw SyncDatabaseError.execution
+    }
+}
+
 public actor SyncDatabase {
     private let handle: SQLiteHandle
     private var database: OpaquePointer? { handle.pointer }
@@ -27,6 +38,7 @@ public actor SyncDatabase {
             throw SyncDatabaseError.open
         }
         self.handle = SQLiteHandle(database)
+        guard sqlite3_busy_timeout(database, 5000) == SQLITE_OK else { throw SyncDatabaseError.open }
         try Self.execute(database, "PRAGMA foreign_keys = ON")
         try Self.execute(database, "PRAGMA journal_mode = WAL")
         try Self.migrate(database)
@@ -40,8 +52,9 @@ public actor SyncDatabase {
         try withStatement("INSERT INTO roots(id, canonical_path, security_bookmark) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET canonical_path = excluded.canonical_path, security_bookmark = excluded.security_bookmark") { statement in
             try bind(id.uuidString, to: statement, index: 1)
             try bind(canonicalPath, to: statement, index: 2)
-            if let securityBookmark { sqlite3_bind_blob(statement, 3, [UInt8](securityBookmark), Int32(securityBookmark.count), transientDestructor) }
-            else { sqlite3_bind_null(statement, 3) }
+            if let securityBookmark {
+                guard sqlite3_bind_blob(statement, 3, [UInt8](securityBookmark), Int32(securityBookmark.count), transientDestructor) == SQLITE_OK else { throw SyncDatabaseError.execution }
+            } else { sqlite3_bind_null(statement, 3) }
             try stepDone(statement)
         }
     }
@@ -49,7 +62,7 @@ public actor SyncDatabase {
     public func rootID(canonicalPath: String) throws -> UUID? {
         try withStatement("SELECT id FROM roots WHERE canonical_path = ?") { statement in
             try bind(canonicalPath, to: statement, index: 1)
-            guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+            guard try stepRow(statement) else { return nil }
             guard let id = uuid(statement, 0) else { throw SyncDatabaseError.execution }
             return id
         }
@@ -59,7 +72,7 @@ public actor SyncDatabase {
         try withStatement("SELECT relative_path, base_sha256, remote_revision FROM items WHERE root_id = ? AND remote_id = ?") { statement in
             try bind(rootID.uuidString, to: statement, index: 1)
             try bind(remoteID, to: statement, index: 2)
-            guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+            guard try stepRow(statement) else { return nil }
             guard let pathText = sqlite3_column_text(statement, 0), let hashText = sqlite3_column_text(statement, 1), let revisionText = sqlite3_column_text(statement, 2) else { throw SyncDatabaseError.execution }
             let path = try RelativePath(String(cString: pathText))
             return Baseline(remoteID: remoteID, relativePath: path, sha256: String(cString: hashText), remoteRevision: String(cString: revisionText))
@@ -70,7 +83,7 @@ public actor SyncDatabase {
         try withStatement("SELECT remote_id, relative_path, base_sha256, remote_revision FROM items WHERE root_id = ?") { statement in
             try bind(rootID.uuidString, to: statement, index: 1)
             var values: [String: Baseline] = [:]
-            while sqlite3_step(statement) == SQLITE_ROW {
+            while try stepRow(statement) {
                 guard let remoteID = text(statement, 0), let pathText = text(statement, 1), let hashText = text(statement, 2), let revisionText = text(statement, 3) else { throw SyncDatabaseError.execution }
                 values[remoteID] = Baseline(remoteID: remoteID, relativePath: try RelativePath(pathText), sha256: hashText, remoteRevision: revisionText)
             }
@@ -106,20 +119,26 @@ public actor SyncDatabase {
         }
     }
 
+    private static let scopeColumns = "course_id, display_name, local_folder, enabled, managed_directory, directory_device, directory_inode"
+
     public func scopes(rootID: UUID, enabledOnly: Bool = false) throws -> [SyncScope] {
         let sql = enabledOnly
-            ? "SELECT course_id, display_name, local_folder, enabled, managed_directory, directory_device, directory_inode FROM sync_scopes WHERE root_id = ? AND enabled = 1 ORDER BY display_name, course_id"
-            : "SELECT course_id, display_name, local_folder, enabled, managed_directory, directory_device, directory_inode FROM sync_scopes WHERE root_id = ? ORDER BY display_name, course_id"
+            ? "SELECT \(Self.scopeColumns) FROM sync_scopes WHERE root_id = ? AND enabled = 1 ORDER BY display_name, course_id"
+            : "SELECT \(Self.scopeColumns) FROM sync_scopes WHERE root_id = ? ORDER BY display_name, course_id"
         return try withStatement(sql) { statement in
             try bind(rootID.uuidString, to: statement, index: 1)
             var scopes: [SyncScope] = []
-            while sqlite3_step(statement) == SQLITE_ROW {
-                guard let displayName = text(statement, 1), let localFolder = text(statement, 2) else { throw SyncDatabaseError.execution }
-                let identity: DirectoryIdentity? = sqlite3_column_int(statement, 4) != 0 && sqlite3_column_type(statement, 5) != SQLITE_NULL && sqlite3_column_type(statement, 6) != SQLITE_NULL ? DirectoryIdentity(device: sqlite3_column_int64(statement, 5), inode: UInt64(bitPattern: sqlite3_column_int64(statement, 6))) : nil
-                scopes.append(SyncScope(rootID: rootID, courseID: sqlite3_column_int64(statement, 0), displayName: displayName, localFolder: localFolder, enabled: sqlite3_column_int(statement, 3) != 0, managedDirectory: identity))
+            while try stepRow(statement) {
+                scopes.append(try scope(statement, rootID: rootID))
             }
             return scopes
         }
+    }
+
+    private func scope(_ statement: OpaquePointer, rootID: UUID) throws -> SyncScope {
+        guard let displayName = text(statement, 1), let localFolder = text(statement, 2) else { throw SyncDatabaseError.execution }
+        let identity: DirectoryIdentity? = sqlite3_column_int(statement, 4) != 0 && sqlite3_column_type(statement, 5) != SQLITE_NULL && sqlite3_column_type(statement, 6) != SQLITE_NULL ? DirectoryIdentity(device: sqlite3_column_int64(statement, 5), inode: UInt64(bitPattern: sqlite3_column_int64(statement, 6))) : nil
+        return SyncScope(rootID: rootID, courseID: sqlite3_column_int64(statement, 0), displayName: displayName, localFolder: localFolder, enabled: sqlite3_column_int(statement, 3) != 0, managedDirectory: identity)
     }
 
     public func beginScopeMove(_ move: PendingScopeMove) throws {
@@ -169,7 +188,7 @@ public actor SyncDatabase {
         try withStatement("SELECT id, remote_id, relative_path, incoming_path, base_sha256, local_sha256, remote_sha256, remote_revision, detected_at, status FROM conflicts WHERE root_id = ? AND status = 'open' ORDER BY detected_at DESC") { statement in
             try bind(rootID.uuidString, to: statement, index: 1)
             var records: [ConflictRecord] = []
-            while sqlite3_step(statement) == SQLITE_ROW {
+            while try stepRow(statement) {
                 guard let id = uuid(statement, 0), let remoteID = text(statement, 1), let relativePath = text(statement, 2), let incomingPath = text(statement, 3), let remoteSHA256 = text(statement, 6), let revision = text(statement, 7), let statusText = text(statement, 9), let status = ConflictStatus(rawValue: statusText) else { throw SyncDatabaseError.execution }
                 records.append(ConflictRecord(id: id, rootID: rootID, remoteID: remoteID, relativePath: try RelativePath(relativePath), incomingPath: try RelativePath(internal: incomingPath), baseSHA256: text(statement, 4), localSHA256: text(statement, 5), remoteSHA256: remoteSHA256, remoteRevision: revision, detectedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 8)), status: status))
             }
@@ -180,7 +199,7 @@ public actor SyncDatabase {
     public func conflict(id: UUID) throws -> ConflictRecord? {
         try withStatement("SELECT root_id, remote_id, relative_path, incoming_path, base_sha256, local_sha256, remote_sha256, remote_revision, detected_at, status FROM conflicts WHERE id = ? AND status = 'open'") { statement in
             try bind(id.uuidString, to: statement, index: 1)
-            guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+            guard try stepRow(statement) else { return nil }
             guard let rootID = uuid(statement, 0), let remoteID = text(statement, 1), let relativePath = text(statement, 2), let incomingPath = text(statement, 3), let remoteSHA256 = text(statement, 6), let revision = text(statement, 7), let statusText = text(statement, 9), let status = ConflictStatus(rawValue: statusText) else { throw SyncDatabaseError.execution }
             return ConflictRecord(id: id, rootID: rootID, remoteID: remoteID, relativePath: try RelativePath(relativePath), incomingPath: try RelativePath(internal: incomingPath), baseSHA256: text(statement, 4), localSHA256: text(statement, 5), remoteSHA256: remoteSHA256, remoteRevision: revision, detectedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 8)), status: status)
         }
@@ -205,7 +224,7 @@ public actor SyncDatabase {
         do {
             let rootID = try withStatement("SELECT root_id FROM conflicts WHERE id = ?") { statement in
                 try bind(id.uuidString, to: statement, index: 1)
-                guard sqlite3_step(statement) == SQLITE_ROW, let rootID = uuid(statement, 0) else { throw SyncDatabaseError.execution }
+                guard try stepRow(statement), let rootID = uuid(statement, 0) else { throw SyncDatabaseError.execution }
                 return rootID
             }
             try upsertBaseline(rootID: rootID, baseline: baseline)
@@ -282,7 +301,7 @@ public actor SyncDatabase {
         return try withStatement(sql) { statement in
             if let rootID { try bind(rootID.uuidString, to: statement, index: 1) }
             var operations: [PendingOperation] = []
-            while sqlite3_step(statement) == SQLITE_ROW {
+            while try stepRow(statement) {
                 guard let id = uuid(statement, 0), let rootID = uuid(statement, 1), let remoteID = text(statement, 2), let destination = text(statement, 3), let stage = text(statement, 4), let expectedKind = text(statement, 5), let remoteSHA256 = text(statement, 7), let remoteRevision = text(statement, 8), let phaseText = text(statement, 9), let phase = PendingOperationPhase(rawValue: phaseText) else { throw SyncDatabaseError.execution }
                 let expectedLocal: LocalState
                 switch expectedKind {
@@ -303,7 +322,7 @@ public actor SyncDatabase {
         return try withStatement(sql) { statement in
             if let rootID { try bind(rootID.uuidString, to: statement, index: 1) }
             var moves: [PendingScopeMove] = []
-            while sqlite3_step(statement) == SQLITE_ROW {
+            while try stepRow(statement) {
                 guard let id = uuid(statement, 0), let root = uuid(statement, 1), let old = text(statement, 3), let new = text(statement, 4) else { throw SyncDatabaseError.execution }
                 moves.append(PendingScopeMove(id: id, rootID: root, courseID: sqlite3_column_int64(statement, 2), oldFolder: old, newFolder: new))
             }
@@ -315,14 +334,19 @@ public actor SyncDatabase {
         try withStatement("SELECT local_folder FROM sync_scopes WHERE root_id = ? AND course_id = ?") { statement in
             try bind(rootID.uuidString, to: statement, index: 1)
             guard sqlite3_bind_int64(statement, 2, courseID) == SQLITE_OK else { throw SyncDatabaseError.execution }
-            guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+            guard try stepRow(statement) else { return nil }
             guard let folder = text(statement, 0) else { throw SyncDatabaseError.execution }
             return folder
         }
     }
 
     public func scope(rootID: UUID, courseID: Int64) throws -> SyncScope? {
-        try scopes(rootID: rootID).first { $0.courseID == courseID }
+        try withStatement("SELECT \(Self.scopeColumns) FROM sync_scopes WHERE root_id = ? AND course_id = ?") { statement in
+            try bind(rootID.uuidString, to: statement, index: 1)
+            guard sqlite3_bind_int64(statement, 2, courseID) == SQLITE_OK else { throw SyncDatabaseError.execution }
+            guard try stepRow(statement) else { return nil }
+            return try scope(statement, rootID: rootID)
+        }
     }
 
     public func renameScopeMetadata(rootID: UUID, courseID: Int64, from oldFolder: String, to newFolder: String) throws {
@@ -334,21 +358,21 @@ public actor SyncDatabase {
     public func hasOpenConflict(rootID: UUID, remoteID: String, revision: String) throws -> Bool {
         try withStatement("SELECT 1 FROM conflicts WHERE root_id = ? AND remote_id = ? AND remote_revision = ? AND status = 'open' LIMIT 1") { statement in
             try bind(rootID.uuidString, to: statement, index: 1); try bind(remoteID, to: statement, index: 2); try bind(revision, to: statement, index: 3)
-            return sqlite3_step(statement) == SQLITE_ROW
+            return try stepRow(statement)
         }
     }
     public func hasPendingOperations(rootID: UUID, prefix: String) throws -> Bool { try hasPath("pending_operations", column: "destination_path", rootID: rootID, prefix: prefix, extra: "") }
     public func trackedItemCount(rootID: UUID, prefix: String) throws -> Int {
         try withStatement("SELECT COUNT(*) FROM items WHERE root_id = ? AND (relative_path = ? OR substr(relative_path, 1, length(?) + 1) = ? || '/')") { statement in
             try bind(rootID.uuidString, to: statement, index: 1); try bind(prefix, to: statement, index: 2); try bind(prefix, to: statement, index: 3); try bind(prefix, to: statement, index: 4)
-            guard sqlite3_step(statement) == SQLITE_ROW else { throw SyncDatabaseError.execution }; return Int(sqlite3_column_int(statement, 0))
+            guard try stepRow(statement) else { throw SyncDatabaseError.execution }; return Int(sqlite3_column_int(statement, 0))
         }
     }
 
     private func hasPath(_ table: String, column: String, rootID: UUID, prefix: String, extra: String) throws -> Bool {
         try withStatement("SELECT 1 FROM \(table) WHERE root_id = ? AND (\(column) = ? OR substr(\(column), 1, length(?) + 1) = ? || '/') \(extra) LIMIT 1") { statement in
             try bind(rootID.uuidString, to: statement, index: 1); try bind(prefix, to: statement, index: 2); try bind(prefix, to: statement, index: 3); try bind(prefix, to: statement, index: 4)
-            return sqlite3_step(statement) == SQLITE_ROW
+            return try stepRow(statement)
         }
     }
 
@@ -385,6 +409,7 @@ public actor SyncDatabase {
         }
         try execute(database, "CREATE UNIQUE INDEX IF NOT EXISTS pending_operations_root_remote ON pending_operations(root_id, remote_id)")
         try execute(database, "CREATE UNIQUE INDEX IF NOT EXISTS pending_operations_root_destination ON pending_operations(root_id, destination_path)")
+        try execute(database, "CREATE INDEX IF NOT EXISTS conflicts_root_remote_status ON conflicts(root_id, remote_id, status)")
         try execute(database, "INSERT OR IGNORE INTO schema_migrations(version) VALUES (1)")
         try execute(database, "INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)")
         try execute(database, "INSERT OR IGNORE INTO schema_migrations(version) VALUES (3)")
@@ -398,7 +423,7 @@ public actor SyncDatabase {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, "PRAGMA table_info(\(table))", -1, &statement, nil) == SQLITE_OK, let statement else { throw SyncDatabaseError.statement }
         defer { sqlite3_finalize(statement) }
-        while sqlite3_step(statement) == SQLITE_ROW {
+        while try stepRow(statement) {
             if let name = sqlite3_column_text(statement, 1), String(cString: name) == column { return true }
         }
         return false
@@ -426,7 +451,7 @@ public actor SyncDatabase {
     private func rootID(forOperation id: UUID) throws -> UUID {
         try withStatement("SELECT root_id FROM pending_operations WHERE id = ?") { statement in
             try bind(id.uuidString, to: statement, index: 1)
-            guard sqlite3_step(statement) == SQLITE_ROW, let rootID = uuid(statement, 0) else { throw SyncDatabaseError.execution }
+            guard try stepRow(statement), let rootID = uuid(statement, 0) else { throw SyncDatabaseError.execution }
             return rootID
         }
     }

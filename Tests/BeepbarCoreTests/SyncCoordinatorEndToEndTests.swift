@@ -317,6 +317,9 @@ import Testing
 
 private final class Fixture: @unchecked Sendable {
         let root: URL
+        // The real app keeps the database in Application Support, outside the sync folder, so a
+        // deleted sync folder must leave it intact. Keep the fixture's layout the same.
+        let supportDirectory: URL
         let rootID = UUID()
         let database: SyncDatabase
         let upstream = MutableFixtureUpstream()
@@ -326,9 +329,12 @@ private final class Fixture: @unchecked Sendable {
         let coordinator: SyncCoordinator
 
         init() async throws {
-            root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+            let container = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+            root = container.appending(path: "Sync", directoryHint: .isDirectory)
+            supportDirectory = container.appending(path: "Support", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            database = try SyncDatabase(url: root.appending(path: "state.sqlite"))
+            try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+            database = try SyncDatabase(url: supportDirectory.appending(path: "state.sqlite"))
             FixtureURLProtocol.upstream = upstream
             let configuration = URLSessionConfiguration.ephemeral
             configuration.protocolClasses = [FixtureURLProtocol.self]
@@ -354,7 +360,10 @@ private final class Fixture: @unchecked Sendable {
             return (try? FileManager.default.contentsOfDirectory(at: staging, includingPropertiesForKeys: nil)) ?? []
         }
 
-        func remove() { try? FileManager.default.removeItem(at: root) }
+        func remove() {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: supportDirectory)
+        }
     }
 }
 
