@@ -170,6 +170,28 @@ import Testing
         #expect(!contents.sections[0].modules[0].files[0].isSupported)
     }
 
+    @Test func outOfRangeTimeModifiedIsReportedAsMalformedEntry() async throws {
+        let session = testSession { _ in
+            response(status: 200, body: #"[{"id":1,"name":"Week 1","modules":[{"id":4,"name":"Slides","contents":[{"type":"file","filename":"intro.pdf","filepath":"/","filesize":42,"timemodified":1e30,"fileurl":"https://webeep.polimi.it/webservice/pluginfile.php/1/a.pdf"}]}]}]"#)
+        }
+        let contents = try await WeBeepAPIClient(session: session).fetchContents(courseID: 9, token: "token")
+
+        #expect(contents.issueCount == 1)
+        #expect(contents.sections[0].modules[0].files.isEmpty)
+    }
+
+    @Test func revisionFallsBackToTimeModifiedAndSizeWithoutAContentHash() async throws {
+        let session = testSession { _ in
+            response(status: 200, body: #"[{"id":1,"name":"Week 1","modules":[{"id":4,"name":"Slides","contents":[{"type":"file","filename":"intro.pdf","filepath":"/","filesize":42,"timemodified":1700000000.75,"fileurl":"https://webeep.polimi.it/webservice/pluginfile.php/1/a.pdf"}]}]}]"#)
+        }
+        let contents = try await WeBeepAPIClient(session: session).fetchContents(courseID: 9, token: "token")
+        let file = try #require(contents.sections[0].modules[0].files.first)
+
+        #expect(file.observedRevision == "1700000000:42")
+        #expect(file.modifiedAt == Date(timeIntervalSince1970: 1700000000.75))
+        #expect(file.size == 42)
+    }
+
     private func testSession(handler: @escaping @Sendable (URLRequest) -> (HTTPURLResponse, Data)) -> URLSession {
         StubURLProtocol.handler = handler
         let configuration = URLSessionConfiguration.ephemeral

@@ -85,7 +85,7 @@ public actor SyncCoordinator {
 
     private func ensureManagedDirectories(_ targets: [SyncTarget]) async throws {
         let scopes = try await database.scopes(rootID: rootID)
-        let scopesByCourse = Dictionary(uniqueKeysWithValues: scopes.map { ($0.courseID, $0) })
+        let scopesByCourse = Dictionary(scopes.map { ($0.courseID, $0) }, uniquingKeysWith: { first, _ in first })
         for target in targets {
             try Task.checkCancellation()
             let result = try await fileStore.ensureTopLevelDirectory(target.localFolder)
