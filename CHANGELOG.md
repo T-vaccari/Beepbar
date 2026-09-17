@@ -14,6 +14,7 @@
 - Keep the course list responsive with many courses by caching default folder names.
 - Treat database read errors as errors instead of acting on a partial view of the synchronization state.
 - Resolving a conflict with the remote version after another local edit no longer leaves a stale second conflict behind.
+- Keep local recovery going past a broken entry, and offer to retry it from the menu bar instead of only by choosing another folder.
 
 ## 2.0 beta
 

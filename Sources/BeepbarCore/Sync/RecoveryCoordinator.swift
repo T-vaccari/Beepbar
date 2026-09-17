@@ -21,10 +21,14 @@ public actor RecoveryCoordinator {
         self.rootID = rootID; self.database = database; self.fileStore = fileStore
     }
 
+    /// Recovers every pending operation and scope move of the root. A row whose recovery throws
+    /// (an invalid stage path, a destination that is no longer a regular file, a database error)
+    /// is reported as unresolved and left pending so that the remaining rows are still processed.
     public func recover() async throws -> RecoveryReport {
         var report = RecoveryReport()
         for operation in try await database.pendingOperations(rootID: rootID) {
-            let outcome = try await recover(operation)
+            let outcome: Outcome
+            do { outcome = try await recover(operation) } catch { outcome = .unresolved }
             switch outcome {
             case .recovered: report = RecoveryReport(recovered: report.recovered + [operation.id], conflicts: report.conflicts, unresolved: report.unresolved)
             case .conflict: report = RecoveryReport(recovered: report.recovered, conflicts: report.conflicts + [operation.id], unresolved: report.unresolved)
@@ -32,7 +36,8 @@ public actor RecoveryCoordinator {
             }
         }
         for move in try await database.pendingScopeMoves(rootID: rootID) {
-            let outcome = try await recover(move)
+            let outcome: Outcome
+            do { outcome = try await recover(move) } catch { outcome = .unresolved }
             switch outcome {
             case .recovered: report = RecoveryReport(recovered: report.recovered + [move.id], conflicts: report.conflicts, unresolved: report.unresolved)
             case .unresolved: report = RecoveryReport(recovered: report.recovered, conflicts: report.conflicts, unresolved: report.unresolved + [move.id])
