@@ -75,12 +75,12 @@ public enum LocalPathPolicy {
         }
         let collapsed = String(replaced).trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "..", with: "-")
-        let safe = collapsed.isEmpty || collapsed == "." || collapsed == ".." || collapsed == ".beepbar" ? "_" : collapsed
+        let safe = collapsed.isEmpty || collapsed == "." || collapsed == ".." || ReservedNamespace.isReservedComponent(collapsed) ? "_" : collapsed
         return limited(safe)
     }
 
     private static func validRemoteComponent(_ input: String) throws -> String {
-        guard input != ".", input != "..", input != ".beepbar", !input.contains("\0") else {
+        guard input != ".", input != "..", !ReservedNamespace.isReservedComponent(input), !input.contains("\0") else {
             throw LocalPathPolicyError.invalidRemotePath
         }
         return component(input)

@@ -11,4 +11,10 @@ struct RelativePathTests {
             #expect(throws: RelativePathError.invalid) { try RelativePath(value) }
         }
     }
+
+    @Test func rejectsTheReservedNamespaceRegardlessOfCase() {
+        for value in [".BEEPBAR", ".BEEPBAR/state.sqlite", ".Beepbar/staging/x.partial", ".BeePbAr/conflicts/a/b.pdf"] {
+            #expect(throws: RelativePathError.invalid) { try RelativePath(value) }
+        }
+    }
 }

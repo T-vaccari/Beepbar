@@ -1,5 +1,23 @@
 import Foundation
 
+/// The hidden directory Beepbar keeps its own staging area and conflict copies in.
+/// macOS volumes are case-insensitive by default, so a folder called `.BEEPBAR` is the
+/// same directory: every check against the reserved name has to ignore case too.
+public enum ReservedNamespace {
+    public static let folderName = ".beepbar"
+
+    /// `true` when `component` names the reserved directory itself, ignoring case.
+    public static func isReservedComponent(_ component: String) -> Bool {
+        component.precomposedStringWithCanonicalMapping.lowercased() == folderName
+    }
+
+    /// `true` when `name` is the reserved directory or any sibling name that shares its
+    /// prefix, ignoring case. Used for the names Beepbar creates directly in the sync root.
+    public static func isReservedTopLevelName(_ name: String) -> Bool {
+        name.precomposedStringWithCanonicalMapping.lowercased().hasPrefix(folderName)
+    }
+}
+
 public struct RelativePath: Sendable, Equatable, Hashable, Codable, CustomStringConvertible {
     public let value: String
 
@@ -17,7 +35,7 @@ public struct RelativePath: Sendable, Equatable, Hashable, Codable, CustomString
         let components = normalized.split(separator: "/", omittingEmptySubsequences: false)
         guard !normalized.hasPrefix("/"), !components.isEmpty,
               components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
-              allowsReservedNamespace || components.first != ".beepbar" else {
+              allowsReservedNamespace || !ReservedNamespace.isReservedComponent(String(components.first ?? "")) else {
             throw RelativePathError.invalid
         }
         self.value = components.joined(separator: "/")
