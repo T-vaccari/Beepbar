@@ -9,6 +9,7 @@
 - Keep the Sparkle update window compact and link directly to the changelog instead of embedding the GitHub release page.
 - Build CI releases with the same Xcode 27 toolchain used for local Release builds.
 - Show the changes included in each GitHub release from Beepbar's update flow.
+- Stop re-reading every synced file on each sync; unchanged files are now checked without hashing, a synced path replaced by a folder no longer aborts the run, and a deleted file's name stays reserved for its own material.
 
 ## 2.0 beta
 
