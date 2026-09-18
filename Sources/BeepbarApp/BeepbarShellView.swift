@@ -272,7 +272,7 @@ private struct SettingsPage: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(authentication.accountState.title)
-                            Text("Il token resta nel Portachiavi macOS.").font(.caption).foregroundStyle(.secondary)
+                            Text("Il token resta in locale, protetto da permessi ristretti.").font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
                         if authentication.accountState != .connected {
