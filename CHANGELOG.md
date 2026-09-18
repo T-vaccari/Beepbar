@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Signing in no longer has to be repeated because macOS keeps asking to authorize access to the Keychain. The WeBeep token is now kept in a file that only your own user account can read, inside Beepbar's Application Support folder, instead of in the Keychain. A token stored by an earlier version is moved over automatically the first time you open this one, and the old Keychain entry is removed.
 - Synchronization no longer re-reads and re-hashes every file it has already downloaded. Each run used to read the full contents of every tracked file from disk just to check that it was still there, so a large library meant reading gigabytes on every manual and scheduled sync. Beepbar now only checks that the files exist, which makes a run over an unchanged folder far faster and much lighter on the disk.
 - Files you have edited locally are no longer downloaded again on every synchronization. When the material on WeBeep changed only its revision and not its contents, Beepbar discarded the download but never recorded that it had caught up, so the same file was fetched again on every following run, forever.
 - A tracked file that has been replaced by a folder no longer aborts the whole synchronization. Previously a single such entry made every run fail, with no way to recover other than choosing a different sync folder.

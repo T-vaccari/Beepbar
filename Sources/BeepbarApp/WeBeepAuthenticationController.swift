@@ -24,7 +24,7 @@ enum AppFailure: Equatable {
         case .serviceUnavailable: "WeBeep non disponibile"
         case .incompatibleResponse: "Problema con WeBeep"
         case .keychainAuthorizationRequired: "Autorizzazione richiesta"
-        case .keychainUnavailable: "Portachiavi non disponibile"
+        case .keychainUnavailable: "Credenziale non disponibile"
         case .partialSync: "Sincronizzazione incompleta"
         case .local: "Richiede attenzione"
         }
@@ -37,7 +37,7 @@ enum AppFailure: Equatable {
         case .serviceUnavailable: "WeBeep non risponde. I materiali locali restano disponibili."
         case .incompatibleResponse: "WeBeep ha restituito una risposta inattesa. Riprova più tardi."
         case .keychainAuthorizationRequired: "Apri Beepbar e autorizza l'accesso al Portachiavi."
-        case .keychainUnavailable: "Beepbar non riesce ad accedere al Portachiavi. Riprova più tardi."
+        case .keychainUnavailable: "Beepbar non riesce a salvare o leggere la credenziale locale. Riprova più tardi."
         case .partialSync: "Alcuni materiali non sono stati aggiornati. I file esistenti sono al sicuro."
         case .local(let message): message
         }
@@ -218,7 +218,7 @@ enum AccountState: Equatable {
     private var database: SyncDatabase?
     private let operationGate = RootOperationGate()
     private let apiClient: WeBeepAPIClient
-    private let credentialVault = CredentialVault(read: KeychainTokenStore.load, write: KeychainTokenStore.save)
+    private let credentialVault = CredentialVault(read: FileTokenStore.load, write: FileTokenStore.save)
     private let notificationCoordinator = SyncNotificationCoordinator()
     private var backgroundScheduler: NSBackgroundActivityScheduler?
     private var syncTask: Task<Void, Never>?
@@ -292,11 +292,12 @@ enum AccountState: Equatable {
         let rootURL = self.rootURL
         let rootID = self.rootID
         let operationGate = self.operationGate
+        let credentialVault = self.credentialVault
         Task { [weak self] in
             let trace = PerformanceTrace.shared.begin("bootstrap.total", category: .bootstrap)
             defer { PerformanceTrace.shared.end("bootstrap.total", category: .bootstrap, state: trace) }
             do {
-                let result = try await bootstrap.prepare(databaseDirectory: Self.databaseDirectory(), rootURL: rootURL, rootID: rootID, gate: operationGate)
+                let result = try await bootstrap.prepare(databaseDirectory: Self.databaseDirectory(), rootURL: rootURL, rootID: rootID, gate: operationGate, credentialVault: credentialVault)
                 guard let self else { return }
                 self.database = result.database
                 await self.applyBootstrap(result)
@@ -469,6 +470,11 @@ enum AccountState: Equatable {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
+        // Without this, an accessory (menu-bar-only) app can show the panel without it being key:
+        // it draws on screen but doesn't own keyboard focus, so typing to rename "New Folder"
+        // (or anywhere else in the panel) is silently swallowed. Same root cause as the WebView
+        // login window in `LoginWindowController.showWindow`.
+        NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let selectedURL = url.standardizedFileURL
         guard !isSyncActive else { return }
@@ -815,33 +821,6 @@ enum AccountState: Equatable {
             } catch let error as KeychainError {
                 await self?.handleKeychainError(error, background: false)
             } catch { self?.status = "Impossibile caricare i contenuti. Nessun dato locale è stato modificato." }
-        }
-    }
-
-    func migrateLegacyCredential() {
-        let alert = NSAlert()
-        alert.messageText = "Migrare la credenziale esistente?"
-        alert.informativeText = "Beepbar leggerà una sola volta il vecchio token dal Portachiavi, lo copierà nel nuovo accesso firmato e poi proverà a rimuovere il vecchio elemento."
-        alert.addButton(withTitle: "Migra credenziale")
-        alert.addButton(withTitle: "Annulla")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        do {
-            let result = try KeychainTokenStore.migrateLegacyCredential()
-            Task { [weak self] in
-                guard let self else { return }
-                await self.credentialVault.invalidate()
-                self.hasStoredCredential = true
-                self.accountState = .connected
-                Self.defaults.removeObject(forKey: Self.credentialExpiredKey)
-                self.notificationCoordinator.clearFailure()
-                self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
-                self.configureBackgroundScheduler()
-                self.status = result == .legacyRetained
-                    ? "Credenziale migrata. Il vecchio elemento può essere rimosso manualmente dal Portachiavi."
-                    : "Credenziale migrata nel nuovo accesso firmato."
-            }
-        } catch {
-            status = "Migrazione non riuscita. Il vecchio token non è stato modificato: puoi accedere di nuovo."
         }
     }
 
@@ -1233,11 +1212,12 @@ private actor BootstrapService {
         case unavailable(KeychainError)
     }
 
-    func prepare(databaseDirectory: URL, rootURL: URL?, rootID: UUID?, gate: RootOperationGate) async throws -> Result {
+    func prepare(databaseDirectory: URL, rootURL: URL?, rootID: UUID?, gate: RootOperationGate, credentialVault: CredentialVault) async throws -> Result {
         let trace = PerformanceTrace.shared.begin("bootstrap.databaseRecovery", category: .bootstrap)
         defer { PerformanceTrace.shared.end("bootstrap.databaseRecovery", category: .bootstrap, state: trace) }
         try FileManager.default.createDirectory(at: databaseDirectory, withIntermediateDirectories: true)
         let database = try SyncDatabase(url: databaseDirectory.appendingPathComponent("sync.sqlite"))
+        _ = await ProductionCredentialMigration.run(vault: credentialVault)
         let credential = try credentialStatus()
         guard let rootURL, let rootID else { return Result(database: database, recoveryBlocked: false, credential: credential) }
         let blocked = try await recoveryBlocked(rootURL: rootURL, rootID: rootID, database: database, gate: gate)
@@ -1253,7 +1233,7 @@ private actor BootstrapService {
 
     private func credentialStatus() throws -> CredentialStatus {
         do {
-            return try KeychainTokenStore.containsCredential() ? .present : .absent
+            return try FileTokenStore.containsCredential() ? .present : .absent
         } catch let error as KeychainError {
             return .unavailable(error)
         }
@@ -1509,98 +1489,7 @@ private enum AutomaticSyncOutcome {
     }
 }
 
-private enum KeychainTokenStore {
-    private static let account = "webeep.mobile.token"
-    private static let service = "io.github.tvaccari.beepbar.auth.local.v3"
-    private static let legacyServices = ["io.github.tvaccari.beepbar.auth.local.v2", "io.github.tvaccari.beepbar"]
-
-    enum MigrationResult { case migrated, legacyRetained }
-
-    static func save(_ token: String) throws {
-        let query = currentQuery()
-        let attributes: [String: Any] = [kSecValueData as String: Data(token.utf8), kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
-        let result = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if result == errSecSuccess { return }; guard result == errSecItemNotFound else { throw KeychainError.write }
-        var item = query; attributes.forEach { item[$0.key] = $0.value }; guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw KeychainError.write }
-    }
-
-    static func load(_ access: CredentialAccess) throws -> String {
-        var query = currentQuery()
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        query[kSecReturnData as String] = true
-        if access == .nonInteractive {
-            let context = LAContext()
-            context.interactionNotAllowed = true
-            query[kSecUseAuthenticationContext as String] = context
-        }
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else { throw KeychainError(status: status) }
-        guard let data = result as? Data, let token = String(data: data, encoding: .utf8), !token.isEmpty else {
-            throw KeychainError.corrupt
-        }
-        return token
-    }
-
-    static func containsCredential() throws -> Bool {
-        var query = currentQuery()
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        query[kSecReturnAttributes as String] = true
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        query[kSecUseAuthenticationContext as String] = context
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecSuccess { return true }
-        if status == errSecItemNotFound { return false }
-        throw KeychainError(status: status)
-    }
-
-    static func migrateLegacyCredential() throws -> MigrationResult {
-        guard try !containsCredential() else { return .migrated }
-        let legacyToken = try loadLegacyCredential()
-        try addLocalCredential(legacyToken)
-        guard try load(.interactive) == legacyToken else { throw KeychainError.corrupt }
-        let deletions = legacyServices.map { SecItemDelete(legacyQuery(service: $0) as CFDictionary) }
-        return deletions.allSatisfy { $0 == errSecSuccess || $0 == errSecItemNotFound } ? .migrated : .legacyRetained
-    }
-
-    private static func currentQuery() -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-    }
-
-    private static func legacyQuery(service: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
-    }
-
-    private static func loadLegacyCredential() throws -> String {
-        for service in legacyServices {
-            var query = legacyQuery(service: service)
-            query[kSecMatchLimit as String] = kSecMatchLimitOne
-            query[kSecReturnData as String] = true
-            var result: CFTypeRef?
-            if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-               let data = result as? Data,
-               let token = String(data: data, encoding: .utf8) {
-                return token
-            }
-        }
-        throw KeychainError.absent
-    }
-
-    private static func addLocalCredential(_ token: String) throws {
-        var item = currentQuery()
-        item[kSecValueData as String] = Data(token.utf8)
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw KeychainError.write }
-    }
-}
-
-private enum KeychainError: Error, Sendable {
+enum KeychainError: Error, Sendable, Equatable {
     case write
     case absent
     case accessDenied

@@ -13,7 +13,6 @@ Beepbar solves exactly that. It never overwrites your local work: take notes dir
 1. [Download Beepbar.dmg](https://github.com/T-vaccari/Beepbar/releases/latest/download/00-Beepbar.dmg), double-click it, then drag Beepbar into Applications. This link always points to the newest release, built automatically from `main`.
 2. On first launch, right-click Beepbar and choose **Open**. If macOS blocks it, go to **System Settings > Privacy & Security** and choose **Open Anyway**.
 3. Open Beepbar from the menu bar, sign in to WeBeep in the browser, and choose the local sync folder.
-4. macOS will ask for **Keychain access** the first time you sign in — Beepbar stores your WeBeep login token there, never in plain text. Click **Allow**; this is expected.
 
 `Beepbar.dmg` is ad-hoc signed so macOS can verify its integrity, but it is not Developer ID signed or notarized because this project does not use an Apple Developer account. The initial Gatekeeper step in step 2 is therefore expected. If it still blocks the app after moving it into Applications, use this fallback:
 
@@ -21,7 +20,7 @@ Beepbar solves exactly that. It never overwrites your local work: take notes dir
 xattr -dr com.apple.quarantine /Applications/Beepbar.app
 ```
 
-The same ad-hoc signing also means the Keychain prompt in step 4 may show the app's bundle identifier (`io.github.tvaccari.beepbar`) instead of "Beepbar", and it can reappear after updating to a new build — both are known limitations of not having a paid Apple Developer account.
+If you're updating from an older version that stored your token in the macOS Keychain, macOS may ask for **Keychain access** once — Beepbar reads that old token a single time to move it into its new local storage, then never touches the Keychain again. Click **Allow**; this only happens once, during that one update.
 
 ## How to Use It
 
@@ -40,7 +39,7 @@ In a preliminary local measurement of the Release build, with automatic sync dis
 ## Features
 
 - Menu-bar app with clear sync status and contextual actions
-- Browser-based WeBeep login, with the token stored in the macOS Keychain
+- Browser-based WeBeep login, with the token stored locally in a permissions-locked file (not the macOS Keychain, so it isn't tied to build-to-build signature changes)
 - Manual or configurable automatic sync
 - Controlled parallel downloads, byte-level progress, and real cancellation
 - Selectable sync root and editable course-folder names
@@ -62,8 +61,6 @@ Open conflicts show up as a badge in the menu bar and in the app's **Conflitti**
 ## Auto-updates
 
 Beepbar can check for new builds via [Sparkle](https://sparkle-project.org), against an appcast published alongside every push to `main`. It's off by default — enable **"Controlla automaticamente"** in Settings, or trigger a one-off check with **"Cerca aggiornamenti…"**. Every update is signed with an EdDSA key that never leaves this repo's secrets, and Sparkle verifies that signature before installing anything.
-
-Because the app is ad-hoc signed (see the Keychain note above), macOS may prompt for Keychain access again after installing an update — this is expected, not a sign anything went wrong.
 
 ## Requirements
 

@@ -12,6 +12,7 @@
 		A10000000000000000000006 /* BeepbarShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* BeepbarShellView.swift */; };
 		A10000000000000000000009 /* UpdaterController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* UpdaterController.swift */; };
 		A10000000000000000000090 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000091 /* OnboardingView.swift */; };
+		A10000000000000000000092 /* CredentialStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000093 /* CredentialStorage.swift */; };
 		A10000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* Assets.xcassets */; };
 		A10000000000000000000003 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000021 /* WebKit.framework */; };
 		A10000000000000000000004 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000022 /* Security.framework */; };
@@ -26,6 +27,7 @@
 		A10000000000000000000014 /* BeepbarShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BeepbarShellView.swift; sourceTree = "<group>"; };
 		A10000000000000000000017 /* UpdaterController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterController.swift; sourceTree = "<group>"; };
 		A10000000000000000000091 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		A10000000000000000000093 /* CredentialStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStorage.swift; sourceTree = "<group>"; };
 		A10000000000000000000013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10000000000000000000015 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -77,6 +79,7 @@
 				A10000000000000000000014 /* BeepbarShellView.swift */,
 				A10000000000000000000017 /* UpdaterController.swift */,
 				A10000000000000000000091 /* OnboardingView.swift */,
+				A10000000000000000000093 /* CredentialStorage.swift */,
 			);
 			name = Sources;
 			path = Sources/BeepbarApp;
@@ -173,6 +176,7 @@
 				A10000000000000000000006 /* BeepbarShellView.swift in Sources */,
 				A10000000000000000000009 /* UpdaterController.swift in Sources */,
 				A10000000000000000000090 /* OnboardingView.swift in Sources */,
+				A10000000000000000000092 /* CredentialStorage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
