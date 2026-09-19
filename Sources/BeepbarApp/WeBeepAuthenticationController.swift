@@ -542,7 +542,7 @@ enum AccountState: Equatable {
         guard let rootURL, let rootID, let database, !recoveryBlocked, !isSyncActive else { return }
         let oldFolder = folder(for: course)
         let trimmedFolder = newFolder.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedFolder.isEmpty else {
+        guard !trimmedFolder.isEmpty, !ReservedNamespace.isReservedTopLevelName(trimmedFolder) else {
             courseRenameErrors[course.id] = "Nome cartella non valido."
             return
         }
@@ -556,7 +556,7 @@ enum AccountState: Equatable {
                 try await renamer.rename(rootID: rootID, courseID: course.id, from: oldFolder, to: trimmedFolder)
                 self.courseFolders[course.id] = trimmedFolder
             } catch {
-                self?.courseRenameErrors[course.id] = "Rinomina non riuscita."
+                self?.courseRenameErrors[course.id] = (error as? CourseRenameError)?.errorDescription ?? "Rinomina non riuscita."
             }
         }
     }

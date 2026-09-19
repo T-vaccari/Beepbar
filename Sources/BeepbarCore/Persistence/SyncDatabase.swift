@@ -149,6 +149,17 @@ public actor SyncDatabase {
         }
     }
 
+    /// Drops a prepared scope move without touching the scope or the tracked paths.
+    ///
+    /// Used to roll back a rename that failed after the row was written: the table is unique per
+    /// (root, course) and per (root, new folder), so a leftover row would block every later rename
+    /// of the same course and would be replayed as an unresolvable move at the next launch.
+    public func abortScopeMove(id: UUID) throws {
+        try withStatement("DELETE FROM pending_scope_moves WHERE id = ?") { statement in
+            try bind(id.uuidString, to: statement, index: 1); try stepDone(statement)
+        }
+    }
+
     public func commitScopeMove(_ move: PendingScopeMove) throws {
         try execute("BEGIN IMMEDIATE")
         do {

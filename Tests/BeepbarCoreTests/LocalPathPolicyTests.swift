@@ -84,4 +84,11 @@ struct LocalPathPolicyTests {
     @Test func extractsForkStyleCourseFolder() {
         #expect(LocalPathPolicy.defaultCourseFolder("054221 - FONDAMENTI DI CALCOLO (2025-26)") == "FONDAMENTI DI CALCOLO")
     }
+
+    @Test func treatsTheReservedNamespaceAsReservedRegardlessOfCase() {
+        #expect(LocalPathPolicy.component(".BEEPBAR") == "_")
+        #expect(LocalPathPolicy.component(".Beepbar") == "_")
+        let file = RemoteFileCandidate(id: "9:4:/pluginfile.php/a.pdf", courseID: 9, sectionID: 1, moduleID: 4, sectionName: "S", moduleName: "M", filename: "a.pdf", remoteFilePath: "/.BEEPBAR/", canonicalPluginPath: "/pluginfile.php/a.pdf", downloadURL: nil, size: 4, modifiedAt: nil, observedRevision: "1:4", isSupported: false)
+        #expect(throws: LocalPathPolicyError.invalidRemotePath) { try LocalPathPolicy.destination(courseFolder: "Analisi", file: file) }
+    }
 }
