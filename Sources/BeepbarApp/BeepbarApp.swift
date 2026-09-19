@@ -8,45 +8,93 @@ struct BeepbarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("Beepbar", systemImage: appDelegate.authentication.menuBarSymbol) {
-            MenuBarContent(authentication: appDelegate.authentication)
-        }
-        .menuBarExtraStyle(.menu)
+        // No window-bearing scene: the status item and its menu are owned and driven
+        // entirely by AppKit (see StatusItemController) to avoid the SwiftUI MenuBarExtra
+        // Button→AppKit bridging path that crashed with SIGBUS in ButtonAction.callAsFunction()
+        // when @Published state mutated during menu tracking (issue #30). `Settings` is the
+        // lightest scene that satisfies `App`'s requirement without creating any UI on launch.
+        Settings { EmptyView() }
     }
 }
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
-    // Owned here, not by the SwiftUI App struct: for a MenuBarExtra-only scene (no
-    // WindowGroup), SwiftUI doesn't guarantee `body` runs before applicationDidFinishLaunching,
-    // so a reference handed over from `body` can still be nil when this fires. AppKit does
-    // guarantee the delegate itself is fully constructed and assigned before that call, so
-    // creating the controller here removes the race entirely.
+    // Owned here, not by the SwiftUI App struct: for a window-less scene, SwiftUI doesn't
+    // guarantee `body` runs before applicationDidFinishLaunching, so a reference handed over
+    // from `body` can still be nil when this fires. AppKit does guarantee the delegate itself
+    // is fully constructed and assigned before that call, so creating the controller here
+    // removes the race entirely.
     let authentication = WeBeepAuthenticationController()
+    private var statusItemController: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        statusItemController = StatusItemController(authentication: authentication)
         guard authentication.needsOnboarding else { return }
         ConfigurationWindowController.shared.show(authentication)
     }
 }
 
-private struct MenuBarContent: View {
-    @ObservedObject var authentication: WeBeepAuthenticationController
+/// Hand-built NSStatusItem/NSMenu replacement for the old SwiftUI `MenuBarExtra`.
+/// Menu items are discarded and rebuilt from scratch in `menuNeedsUpdate(_:)` right before
+/// each time the menu opens, instead of being bound to `@Published` state via SwiftUI. This
+/// means a background sync mutating `authentication`'s state can never touch a menu item that
+/// AppKit is mid-tracking — the two are no longer coupled once the menu is on screen.
+@MainActor final class StatusItemController: NSObject, NSMenuDelegate {
+    private let statusItem: NSStatusItem
+    private let authentication: WeBeepAuthenticationController
 
-    var body: some View {
-        Label(authentication.menuBarTitle, systemImage: authentication.menuBarSymbol)
-            .accessibilityLabel(authentication.menuBarTitle)
-        Text(authentication.syncState.detail)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
-        Button(authentication.menuBarActionTitle) {
-            authentication.performMenuBarAction()
-        }
-        Divider()
-        Button("Apri Beepbar…") {
-            ConfigurationWindowController.shared.show(authentication)
-        }
-        Button("Esci da Beepbar") { NSApp.terminate(nil) }
+    init(authentication: WeBeepAuthenticationController) {
+        self.authentication = authentication
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        super.init()
+        let image = NSImage(systemSymbolName: authentication.menuBarSymbol, accessibilityDescription: "Beepbar")
+        image?.isTemplate = true
+        statusItem.button?.image = image
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let titleItem = NSMenuItem()
+        titleItem.title = authentication.menuBarTitle
+        titleItem.isEnabled = false
+        menu.addItem(titleItem)
+
+        let detailItem = NSMenuItem()
+        detailItem.attributedTitle = NSAttributedString(
+            string: authentication.syncState.detail,
+            attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor]
+        )
+        detailItem.isEnabled = false
+        menu.addItem(detailItem)
+
+        let actionItem = NSMenuItem(title: authentication.menuBarActionTitle, action: #selector(performAction), keyEquivalent: "")
+        actionItem.target = self
+        menu.addItem(actionItem)
+
+        menu.addItem(.separator())
+
+        let openItem = NSMenuItem(title: "Apri Beepbar…", action: #selector(openConfiguration), keyEquivalent: "")
+        openItem.target = self
+        menu.addItem(openItem)
+
+        let quitItem = NSMenuItem(title: "Esci da Beepbar", action: #selector(quit), keyEquivalent: "")
+        quitItem.target = self
+        menu.addItem(quitItem)
+    }
+
+    @objc private func performAction() {
+        authentication.performMenuBarAction()
+    }
+
+    @objc private func openConfiguration() {
+        ConfigurationWindowController.shared.show(authentication)
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
     }
 }
 
@@ -130,9 +178,6 @@ private struct BeepbarConfigurationView: View {
                 }
                 Button("Verifica") { authentication.validateConnection() }
                     .disabled(!authentication.hasStoredCredential || authentication.isAuthenticating || authentication.isVerifying)
-                if !authentication.hasStoredCredential {
-                    Button("Migra credenziale") { authentication.migrateLegacyCredential() }.disabled(authentication.isAuthenticating)
-                }
             }.padding(.top, 4)
         }
     }
