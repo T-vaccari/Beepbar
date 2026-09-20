@@ -182,7 +182,36 @@ enum AccountState: Equatable {
     }
 }
 
+/// Everything `StatusItemController.menuNeedsUpdate(_:)` needs to draw the menu, precomputed
+/// on the main actor and read back without touching any `@MainActor`-isolated member. See
+/// `menuBarSnapshot` for why this exists.
+struct MenuBarSnapshot: Sendable {
+    let title: String
+    let detail: String
+    let actionTitle: String
+}
+
 @MainActor final class WeBeepAuthenticationController: NSObject, ObservableObject {
+    // Plain, non-isolated, single-writer/single-reader-on-main-thread cache of the menu bar's
+    // derived text. StatusItemController's NSMenuDelegate/target-action methods are invoked by
+    // AppKit via Objective-C dispatch, which forces the Swift runtime to dynamically re-verify
+    // "is this the main executor?" before touching any `@MainActor`-isolated member — a check
+    // that crashed with SIGBUS at a fixed address in libswiftCore.dylib on every morning wake,
+    // both pre- and post- the MenuBarExtra→NSStatusItem rewrite (issue #30, PR #31). Reading a
+    // `nonisolated(unsafe)` plain struct instead of calling an isolated computed property skips
+    // that dynamic check entirely rather than relocating it. Safe because every write happens
+    // synchronously on the main actor (already the only thread that ever mutates this object),
+    // and the only other reader is AppKit's menu-tracking callback, which also only ever runs
+    // on the main thread.
+    //
+    // `refreshMenuBarSnapshot()` is called from `didSet` on every stored property that feeds
+    // `menuBarAction`/`menuBarTitle`/`menuBarActionTitle` (currently: syncState, accountState,
+    // hasStoredCredential, recoveryBlocked, conflicts, rootURL, activeOperationID). If you make
+    // those computed properties depend on anything else, add a matching
+    // `didSet { refreshMenuBarSnapshot() }` to that property too, or the menu bar will silently
+    // go stale instead of crashing loudly.
+    private(set) nonisolated(unsafe) var menuBarSnapshot = MenuBarSnapshot(title: "", detail: "", actionTitle: "")
+
     @Published private(set) var isAuthenticating = false
     @Published private(set) var isVerifying = false
     @Published private(set) var isLoadingCourses = false
@@ -192,22 +221,34 @@ enum AccountState: Equatable {
     @Published private(set) var selectedCourse: RemoteCourseSummary?
     @Published private(set) var contents: RemoteCourseContents?
     @Published private(set) var isLoadingContents = false
-    @Published private(set) var hasStoredCredential: Bool
+    @Published private(set) var hasStoredCredential: Bool {
+        didSet { refreshMenuBarSnapshot() }
+    }
     @Published private(set) var status = "Avvio Beepbar…"
-    @Published private(set) var syncState: AppSyncState = .starting
-    @Published private(set) var accountState: AccountState = .notConnected
-    @Published private(set) var rootURL: URL?
+    @Published private(set) var syncState: AppSyncState = .starting {
+        didSet { refreshMenuBarSnapshot() }
+    }
+    @Published private(set) var accountState: AccountState = .notConnected {
+        didSet { refreshMenuBarSnapshot() }
+    }
+    @Published private(set) var rootURL: URL? {
+        didSet { refreshMenuBarSnapshot() }
+    }
     @Published private(set) var needsOnboarding: Bool
     @Published private(set) var enabledCourseIDs: Set<Int64>
     @Published private(set) var automaticSyncEnabled: Bool
     @Published private(set) var automaticSyncInterval: Int
     @Published private(set) var automaticDailyCheckTime: Date
-    @Published private(set) var recoveryBlocked = false
+    @Published private(set) var recoveryBlocked = false {
+        didSet { refreshMenuBarSnapshot() }
+    }
     @Published private(set) var courseFolders: [Int64: String] = [:]
     @Published private(set) var courseRenameErrors: [Int64: String] = [:]
     @Published private(set) var renamingCourseID: Int64?
     let progressStore = SyncProgressStore()
-    @Published private(set) var conflicts: [ConflictRecord] = []
+    @Published private(set) var conflicts: [ConflictRecord] = [] {
+        didSet { refreshMenuBarSnapshot() }
+    }
     @Published private(set) var resolvingConflictID: UUID?
     // Default folder name per course id, derived from `courses` and rebuilt only when that list
     // changes: `folder(for:)` runs for every row on every render of the course list, so it has
@@ -222,7 +263,9 @@ enum AccountState: Equatable {
     private let notificationCoordinator = SyncNotificationCoordinator()
     private var backgroundScheduler: NSBackgroundActivityScheduler?
     private var syncTask: Task<Void, Never>?
-    private var activeOperationID: UUID?
+    private var activeOperationID: UUID? {
+        didSet { refreshMenuBarSnapshot() }
+    }
     private var automaticOutcome: AutomaticSyncOutcome = .finished
     private var rootID: UUID?
     private var scheduledConfiguration: BackgroundScheduleConfiguration?
@@ -376,6 +419,14 @@ enum AccountState: Equatable {
         case .openSettings: "Apri Impostazioni"
         case .synchronize: "Sincronizza ora"
         }
+    }
+
+    private func refreshMenuBarSnapshot() {
+        menuBarSnapshot = MenuBarSnapshot(
+            title: menuBarTitle,
+            detail: syncState.detail,
+            actionTitle: menuBarActionTitle
+        )
     }
 
     private var menuBarAction: MenuBarAction {
