@@ -35,14 +35,28 @@ struct BeepbarApp: App {
 
 /// Hand-built NSStatusItem/NSMenu replacement for the old SwiftUI `MenuBarExtra`.
 /// Menu items are discarded and rebuilt from scratch in `menuNeedsUpdate(_:)` right before
-/// each time the menu opens, instead of being bound to `@Published` state via SwiftUI. This
-/// means a background sync mutating `authentication`'s state can never touch a menu item that
-/// AppKit is mid-tracking — the two are no longer coupled once the menu is on screen.
-@MainActor final class StatusItemController: NSObject, NSMenuDelegate {
+/// each time the menu opens, instead of being bound to `@Published` state via SwiftUI.
+///
+/// Deliberately NOT `@MainActor`, and deliberately never calls into any `@MainActor`-isolated
+/// member of `authentication` synchronously. AppKit invokes `NSMenuDelegate`/target-action
+/// methods via Objective-C dispatch, and bridging that into `@MainActor`-isolated Swift code
+/// (whether through a compiler-synthesized `@objc` thunk or an explicit `MainActor.assumeIsolated`)
+/// makes the Swift runtime dynamically re-verify "is this actually the main executor?"
+/// (`swift_task_isCurrentExecutorWithFlagsImpl` → `swift_getObjectType`). On this OS build that
+/// verification itself crashes with SIGBUS at a fixed address inside `libswiftCore.dylib` — the
+/// same instruction, same address, in five separate app builds, both before and after #31's
+/// MenuBarExtra→NSStatusItem rewrite (`ButtonAction.callAsFunction()` pre-#31,
+/// `menuNeedsUpdate(_:)` post-#31), always on the first status-item interaction after the Mac
+/// wakes from sleep. #31 relocated which `@objc` call site triggered the check; it didn't remove
+/// the check, so the crash reappeared. `menuNeedsUpdate(_:)` now reads only `authentication`'s
+/// `nonisolated(unsafe) menuBarSnapshot` — see its doc comment — and the action methods hand off
+/// to the main actor via `Task`, which enqueues onto the main executor instead of synchronously
+/// asserting that we're already on it, so no isolation check runs on this path at all.
+final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let authentication: WeBeepAuthenticationController
 
-    init(authentication: WeBeepAuthenticationController) {
+    @MainActor init(authentication: WeBeepAuthenticationController) {
         self.authentication = authentication
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
@@ -56,21 +70,22 @@ struct BeepbarApp: App {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        let snapshot = authentication.menuBarSnapshot
 
         let titleItem = NSMenuItem()
-        titleItem.title = authentication.menuBarTitle
+        titleItem.title = snapshot.title
         titleItem.isEnabled = false
         menu.addItem(titleItem)
 
         let detailItem = NSMenuItem()
         detailItem.attributedTitle = NSAttributedString(
-            string: authentication.syncState.detail,
+            string: snapshot.detail,
             attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor]
         )
         detailItem.isEnabled = false
         menu.addItem(detailItem)
 
-        let actionItem = NSMenuItem(title: authentication.menuBarActionTitle, action: #selector(performAction), keyEquivalent: "")
+        let actionItem = NSMenuItem(title: snapshot.actionTitle, action: #selector(performAction), keyEquivalent: "")
         actionItem.target = self
         menu.addItem(actionItem)
 
@@ -86,15 +101,17 @@ struct BeepbarApp: App {
     }
 
     @objc private func performAction() {
-        authentication.performMenuBarAction()
+        let authentication = authentication
+        Task { @MainActor in authentication.performMenuBarAction() }
     }
 
     @objc private func openConfiguration() {
-        ConfigurationWindowController.shared.show(authentication)
+        let authentication = authentication
+        Task { @MainActor in ConfigurationWindowController.shared.show(authentication) }
     }
 
     @objc private func quit() {
-        NSApp.terminate(nil)
+        Task { @MainActor in NSApp.terminate(nil) }
     }
 }
 
