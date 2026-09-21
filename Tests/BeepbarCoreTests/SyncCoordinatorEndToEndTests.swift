@@ -332,12 +332,14 @@ import Testing
         defer { fixture.remove() }
         fixture.upstream.downloadDelay = 0.01
         let recorder = ProgressRecorder()
-        _ = try await fixture.coordinator.synchronize(targets: [fixture.targets[0]], token: "test-token", mode: .manual) { update in recorder.append(update) }
+        let summary = try await fixture.coordinator.synchronize(targets: [fixture.targets[0]], token: "test-token", mode: .manual) { update in recorder.append(update) }
         let progress = recorder.values
         #expect(fixture.upstream.maximumActiveDownloads == 3)
         #expect(progress.count == 100)
         #expect(progress.enumerated().allSatisfy { $0.element.completed == $0.offset + 1 })
+        #expect(progress.allSatisfy { $0.perCourse.isEmpty })
         #expect(progress.last?.completed == progress.last?.total)
+        #expect(summary.perCourse.count == 1)
     }
 
     @Test func cancellationDuringStagingPreservesExistingFileAndBaseline() async throws {

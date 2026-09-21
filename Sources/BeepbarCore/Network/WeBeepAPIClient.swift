@@ -241,14 +241,16 @@ public final class WeBeepAPIClient: @unchecked Sendable {
         let mapped = sections.compactMap { section -> RemoteContentSection? in
             guard section.id > 0 else { issueCount += 1; return nil }
             let sectionName = MoodleText.normalized(section.name) ?? ""
-            let modules = (section.modules ?? []).compactMap { module -> RemoteContentModule? in
+            issueCount += section.modules?.discardedCount ?? 0
+            let modules = (section.modules?.elements ?? []).compactMap { module -> RemoteContentModule? in
                 guard module.id > 0 else { issueCount += 1; return nil }
                 let name = MoodleText.normalized(module.name) ?? ""
+                issueCount += module.contents?.discardedCount ?? 0
                 if let modname = module.modname?.lowercased(), ["forum", "url", "page", "label", "choice", "feedback", "lesson", "wooclap"].contains(modname) {
-                    issueCount += (module.contents ?? []).count
+                    issueCount += module.contents?.elements.count ?? 0
                     return nil
                 }
-                let moduleContents = module.contents ?? []
+                let moduleContents = module.contents?.elements ?? []
                 let isSingleFileResource = module.modname?.lowercased() == "resource"
                     && moduleContents.count == 1
                     && moduleContents.first?.type == "file"
@@ -488,8 +490,26 @@ private struct CourseResponse: Decodable {
     let enddate: TimeInterval?
 }
 
-private struct SectionResponse: Decodable { let id: Int64; let name: String?; let modules: [ModuleResponse]? }
-private struct ModuleResponse: Decodable { let id: Int64; let name: String?; let modname: String?; let contents: [ContentResponse]? }
+private struct LossyArray<Element: Decodable>: Decodable {
+    let elements: [Element]
+    let discardedCount: Int
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var elements: [Element] = []
+        var discardedCount = 0
+        while !container.isAtEnd {
+            let elementDecoder = try container.superDecoder()
+            do { elements.append(try Element(from: elementDecoder)) }
+            catch { discardedCount += 1 }
+        }
+        self.elements = elements
+        self.discardedCount = discardedCount
+    }
+}
+
+private struct SectionResponse: Decodable { let id: Int64; let name: String?; let modules: LossyArray<ModuleResponse>? }
+private struct ModuleResponse: Decodable { let id: Int64; let name: String?; let modname: String?; let contents: LossyArray<ContentResponse>? }
 private struct ContentResponse: Decodable {
     let type: String?
     let filename: String?

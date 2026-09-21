@@ -218,8 +218,8 @@ public actor ManualSyncRun {
                         firstServiceStatus = firstServiceStatus ?? serviceStatus
                     }
                 }
-                await progress(SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures, perCourse: Self.snapshotPerCourse(added: perCourseAdded, updated: perCourseUpdated, folders: perCourseFolder, items: perCourseItems, failures: perCourseFailures)))
                 if next < items.count { enqueue(items[next]); next += 1 }
+                await progress(SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures))
             }
         }
         try Task.checkCancellation()

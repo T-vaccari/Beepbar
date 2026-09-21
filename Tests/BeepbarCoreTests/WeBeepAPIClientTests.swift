@@ -120,6 +120,18 @@ import Testing
         #expect(contents.sections[0].modules[0].files[0].isSupported)
     }
 
+    @Test func keepsValidEntriesBesideMalformedModulesAndContents() async throws {
+        let session = testSession { _ in
+            response(status: 200, body: #"[{"id":1,"modules":[{"id":"bad"},{"id":4,"name":"Slides","contents":[{"type":"file","filename":7},{"type":"file","filename":"intro.pdf","filepath":"/","filesize":42,"timemodified":1,"fileurl":"https://webeep.polimi.it/webservice/pluginfile.php/1/a.pdf"}]}]}]"#)
+        }
+
+        let contents = try await WeBeepAPIClient(session: session).fetchContents(courseID: 9, token: "token")
+
+        #expect(contents.issueCount == 2)
+        #expect(contents.sections[0].modules.map(\.id) == [4])
+        #expect(contents.sections[0].modules[0].files.map(\.filename) == ["intro.pdf"])
+    }
+
     @Test func normalizesMoodleSectionAndModuleNames() async throws {
         let session = testSession { _ in
             response(status: 200, body: #"[{"id":1,"name":"","modules":[{"id":4,"name":"{mlang en}LECTURES{mlang}","modname":"folder","contents":[{"type":"file","filename":"intro.pdf","filepath":"/","filesize":42,"timemodified":1,"fileurl":"https://webeep.polimi.it/webservice/pluginfile.php/1/a.pdf"}]}]}]"#)

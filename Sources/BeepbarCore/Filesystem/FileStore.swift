@@ -173,6 +173,7 @@ public actor FileStore {
             var offset = 0
             while offset < bytes.count {
                 let count = Darwin.write(fd, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+                if count < 0, errno == EINTR { continue }
                 guard count > 0 else { throw fileStoreError() }
                 offset += count
             }
@@ -211,6 +212,7 @@ public actor FileStore {
             var offset = 0
             while offset < bytes.count {
                 let count = Darwin.write(fd, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+                if count < 0, errno == EINTR { continue }
                 guard count > 0 else { throw FileStoreError.ioFailure }
                 offset += count
             }
@@ -282,7 +284,7 @@ public actor FileStore {
                 throw error
             }
         }
-        guard fsync(destinationParent) == 0 else { throw fileStoreError() }
+        guard fsync(staging) == 0, fsync(destinationParent) == 0 else { throw fileStoreError() }
         return result
     }
 
@@ -359,6 +361,41 @@ public actor FileStore {
         defer { close(parent) }
         guard unlinkat(parent, name, 0) == 0 else { throw fileStoreError() }
         guard fsync(parent) == 0 else { throw fileStoreError() }
+        let components = path.components
+        guard components.count > 3 else { return }
+        for index in stride(from: components.count - 2, through: 2, by: -1) {
+            guard let ancestorParent = try? directoryFD(for: Array(components.prefix(index)), create: false) else { break }
+            defer { close(ancestorParent) }
+            guard unlinkat(ancestorParent, components[index], AT_REMOVEDIR) == 0 else { break }
+            _ = fsync(ancestorParent)
+        }
+    }
+
+    public func sweepUnreferencedStages(referencedPaths: Set<RelativePath>) throws {
+        let referencedNames = Set(referencedPaths.compactMap { path -> String? in
+            let components = path.components
+            guard components.count == 3, components[0] == ".beepbar", components[1] == "staging", components[2].hasSuffix(".partial") else { return nil }
+            return components[2]
+        })
+        let staging: Int32
+        do { staging = try directoryFD(for: [".beepbar", "staging"], create: false) }
+        catch where errno == ENOENT { return }
+        defer { close(staging) }
+        guard let directory = fdopendir(dup(staging)) else { throw fileStoreError() }
+        defer { closedir(directory) }
+        var removed = false
+        while let entry = readdir(directory) {
+            let name = withUnsafePointer(to: &entry.pointee.d_name) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: entry.pointee.d_name)) { String(cString: $0) }
+            }
+            guard name.hasSuffix(".partial"), !referencedNames.contains(name) else { continue }
+            var metadata = stat()
+            guard fstatat(staging, name, &metadata, AT_SYMLINK_NOFOLLOW) == 0,
+                  (metadata.st_mode & S_IFMT) == S_IFREG else { continue }
+            guard unlinkat(staging, name, 0) == 0 else { throw fileStoreError() }
+            removed = true
+        }
+        if removed, fsync(staging) != 0 { throw fileStoreError() }
     }
 
     public func discard(_ artifact: StagedArtifact) throws {

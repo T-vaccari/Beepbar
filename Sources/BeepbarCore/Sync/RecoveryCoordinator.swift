@@ -26,7 +26,9 @@ public actor RecoveryCoordinator {
     /// is reported as unresolved and left pending so that the remaining rows are still processed.
     public func recover() async throws -> RecoveryReport {
         var report = RecoveryReport()
-        for operation in try await database.pendingOperations(rootID: rootID) {
+        let operations = try await database.pendingOperations(rootID: rootID)
+        try await fileStore.sweepUnreferencedStages(referencedPaths: Set(operations.map(\.stagePath)))
+        for operation in operations {
             let outcome: Outcome
             do { outcome = try await recover(operation) } catch { outcome = .unresolved }
             switch outcome {

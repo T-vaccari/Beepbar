@@ -45,6 +45,29 @@ struct RecoveryCoordinatorTests {
         #expect(try await database.pendingOperations().isEmpty)
     }
 
+    @Test func removesOrphanedStagesWithoutRemovingPendingOperations() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rootID = UUID()
+        let database = try SyncDatabase(url: root.appending(path: "state.sqlite"))
+        try await database.registerRoot(id: rootID, canonicalPath: root.path)
+        let store = try FileStore(root: root)
+        let pendingStage = try await store.createStage()
+        try await store.write(Data("pending".utf8), to: pendingStage)
+        let pending = try await store.finalize(pendingStage)
+        let orphanStage = try await store.createStage()
+        try await store.write(Data("orphan".utf8), to: orphanStage)
+        let orphan = try await store.finalize(orphanStage)
+        let operation = PendingOperation(rootID: rootID, remoteID: "file", destination: try RelativePath("Course/file.txt"), stagePath: pending.stagePath, expectedLocal: .missing, remoteSHA256: pending.sha256, remoteRevision: "1")
+        try await database.beginOperation(operation)
+
+        let report = try await RecoveryCoordinator(rootID: rootID, database: database, fileStore: store).recover()
+
+        #expect(report.recovered == [operation.id])
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: orphan.stagePath.value).path))
+        #expect(try String(contentsOf: root.appending(path: "Course/file.txt"), encoding: .utf8) == "pending")
+    }
+
     @Test func cleansRollbackAfterCommittedReplacementInterruption() async throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
