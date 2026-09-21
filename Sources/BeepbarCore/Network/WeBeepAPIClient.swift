@@ -254,7 +254,12 @@ public final class WeBeepAPIClient: @unchecked Sendable {
                     && moduleContents.first?.type == "file"
                 let files = moduleContents.compactMap { content -> RemoteFileCandidate? in
                     guard content.type == "file" else { return nil }
-                    guard let filename = bounded(content.filename), let remoteFilePath = bounded(content.filepath), content.filesize ?? -1 >= 0, content.timemodified ?? -1 >= 0,
+                    guard let filename = bounded(content.filename), let remoteFilePath = bounded(content.filepath),
+                          let filesize = content.filesize, filesize >= 0,
+                          let timemodified = content.timemodified, timemodified >= 0,
+                          // An out-of-range (or NaN) timestamp would trap when narrowed to Int64 for the
+                          // revision fallback below, so it is treated as a malformed entry instead.
+                          let modifiedSeconds = Int64(exactly: timemodified.rounded(.towardZero)),
                           let urlText = content.fileurl, let url = URL(string: urlText), let canonicalPath = canonicalPluginPath(url, policy: policy) else { issueCount += 1; return nil }
                     let identity = "\(courseID):\(module.id):\(canonicalPath)"
                     identityCounts[identity, default: 0] += 1
@@ -264,14 +269,14 @@ public final class WeBeepAPIClient: @unchecked Sendable {
                     else if hasCredentialQuery { reason = "URL con credenziale" }
                     else { reason = nil }
                     if reason != nil { issueCount += 1 }
-                    let revision = validContentHash(content.contenthash) ?? "\(Int64(content.timemodified!)):\(content.filesize!)"
+                    let revision = validContentHash(content.contenthash) ?? "\(modifiedSeconds):\(filesize)"
                     return RemoteFileCandidate(
                         id: identity, courseID: courseID, sectionID: section.id, moduleID: module.id,
                         sectionName: sectionName, moduleName: name,
                         moduleType: module.modname?.lowercased() ?? "unknown", isSingleFileResource: isSingleFileResource,
                         filename: filename, remoteFilePath: remoteFilePath, canonicalPluginPath: canonicalPath,
-                        downloadURL: reason == nil ? url : nil, size: content.filesize!,
-                        modifiedAt: content.timemodified.map(Date.init(timeIntervalSince1970:)), observedRevision: revision,
+                        downloadURL: reason == nil ? url : nil, size: filesize,
+                        modifiedAt: Date(timeIntervalSince1970: timemodified), observedRevision: revision,
                         isSupported: reason == nil, ineligibilityReason: reason
                     )
                 }

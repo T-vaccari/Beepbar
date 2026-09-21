@@ -105,6 +105,29 @@ import Testing
         #expect(values["file"]?.relativePath == fixture.path)
     }
 
+    @Test func removesDownloadTemporaryFileAfterSuccessfulImport() async throws {
+        let body = Data("import-leak-\(UUID().uuidString)".utf8)
+        let fixture = try await Fixture(remoteData: body)
+        defer { fixture.remove() }
+        let before = Fixture.downloadTemporaryFiles()
+        #expect(try await fixture.engine().sync(file: fixture.file(revision: "1"), destination: fixture.path, token: "token") == .installedNew)
+        #expect(Fixture.leakedDownloadTemporaries(since: before, body: body).isEmpty)
+    }
+
+    @Test func removesDownloadTemporaryFileWhenImportRejectsSizeMismatch() async throws {
+        let body = Data("mismatch-leak-\(UUID().uuidString)".utf8)
+        let fixture = try await Fixture(remoteData: body)
+        defer { fixture.remove() }
+        // Without Content-Length the downloader cannot catch the short body, so the size check
+        // happens in the import and the temporary file has to be cleaned up on that path too.
+        IntegrationDownloadProtocol.sendsContentLength = false
+        let before = Fixture.downloadTemporaryFiles()
+        await #expect(throws: FileStoreError.sizeMismatch) {
+            try await fixture.engine().sync(file: fixture.file(revision: "1", size: 4096), destination: fixture.path, token: "token")
+        }
+        #expect(Fixture.leakedDownloadTemporaries(since: before, body: body).isEmpty)
+    }
+
     private final class Fixture {
         let root: URL
         let rootID = UUID()
@@ -123,6 +146,21 @@ import Testing
             IntegrationDownloadProtocol.status = 200
             IntegrationDownloadProtocol.data = remoteData
             IntegrationDownloadProtocol.requestCount = 0
+            IntegrationDownloadProtocol.sendsContentLength = true
+        }
+
+        // URLSession stages every download in the process temporary directory, which the rest of
+        // the suite uses at the same time: only a file holding this test's body is our leak.
+        static func leakedDownloadTemporaries(since before: Set<String>, body: Data) -> [String] {
+            let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            return downloadTemporaryFiles().subtracting(before).filter {
+                (try? Data(contentsOf: directory.appending(path: $0))) == body
+            }
+        }
+
+        static func downloadTemporaryFiles() -> Set<String> {
+            let entries = (try? FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory())) ?? []
+            return Set(entries.filter { $0.hasPrefix("CFNetworkDownload") })
         }
 
         var downloadCount: Int { IntegrationDownloadProtocol.requestCount }
@@ -130,11 +168,11 @@ import Testing
         func engine() -> ManualSyncEngine {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.protocolClasses = [IntegrationDownloadProtocol.self]
-            return ManualSyncEngine(rootID: rootID, database: database, fileStore: store, downloader: RemoteDownloader(session: URLSession(configuration: configuration)))
+            return ManualSyncEngine(rootID: rootID, database: database, fileStore: store, downloader: RemoteDownloader(session: URLSession(configuration: configuration)), networkAccess: .unrestricted)
         }
 
-        func file(revision: String) -> RemoteFileCandidate {
-            RemoteFileCandidate(id: "file", courseID: 1, sectionID: 1, moduleID: 1, sectionName: "", moduleName: "", filename: "material.txt", remoteFilePath: "/", canonicalPluginPath: "/pluginfile.php/test", downloadURL: URL(string: "https://webeep.polimi.it/pluginfile.php/test")!, size: Int64(IntegrationDownloadProtocol.data.count), modifiedAt: nil, observedRevision: revision, isSupported: true)
+        func file(revision: String, size: Int64? = nil) -> RemoteFileCandidate {
+            RemoteFileCandidate(id: "file", courseID: 1, sectionID: 1, moduleID: 1, sectionName: "", moduleName: "", filename: "material.txt", remoteFilePath: "/", canonicalPluginPath: "/pluginfile.php/test", downloadURL: URL(string: "https://webeep.polimi.it/pluginfile.php/test")!, size: size ?? Int64(IntegrationDownloadProtocol.data.count), modifiedAt: nil, observedRevision: revision, isSupported: true)
         }
 
         func remove() { try? FileManager.default.removeItem(at: root) }
@@ -145,11 +183,13 @@ private final class IntegrationDownloadProtocol: URLProtocol, @unchecked Sendabl
     nonisolated(unsafe) static var status = 200
     nonisolated(unsafe) static var data = Data()
     nonisolated(unsafe) static var requestCount = 0
+    nonisolated(unsafe) static var sendsContentLength = true
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Self.requestCount += 1
-        let response = HTTPURLResponse(url: request.url!, statusCode: Self.status, httpVersion: nil, headerFields: ["Content-Length": "\(Self.data.count)"])!
+        let headers = Self.sendsContentLength ? ["Content-Length": "\(Self.data.count)"] : [:]
+        let response = HTTPURLResponse(url: request.url!, statusCode: Self.status, httpVersion: nil, headerFields: headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Self.data)
         client?.urlProtocolDidFinishLoading(self)
