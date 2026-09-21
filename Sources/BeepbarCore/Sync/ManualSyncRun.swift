@@ -139,8 +139,6 @@ public actor ManualSyncRun {
                         throw CancellationError()
                     } catch let error as RemoteDownloadError {
                         switch error {
-                        case .cancelled:
-                            throw CancellationError()
                         case .network(let failure):
                             throw WeBeepAPIError.network(failure)
                         case .transport(let status) where status == 401 || status == 403:

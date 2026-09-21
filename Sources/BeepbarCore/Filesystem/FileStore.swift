@@ -195,24 +195,10 @@ public actor FileStore {
             defer { close(staging) }
             let stageFD = try openStage(stage, in: staging, flags: O_WRONLY | O_TRUNC)
             defer { close(stageFD) }
-            let duplicate = dup(sourceFD)
-            guard duplicate >= 0 else { throw FileStoreError.ioFailure }
-            let handle = FileHandle(fileDescriptor: duplicate, closeOnDealloc: true)
-            defer { try? handle.close() }
-            var total: Int64 = 0
-            var hasher = SHA256()
-            hashCount += 1
-            while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
-                try Task.checkCancellation()
-                total += Int64(chunk.count)
-                guard total <= maximumSize else { throw FileStoreError.tooLarge }
-                hasher.update(data: chunk)
-                try Self.write(chunk, to: stageFD)
-            }
-            try Task.checkCancellation()
-            guard total == expectedSize else { throw FileStoreError.sizeMismatch }
+            let copied = try hashContents(of: sourceFD, copyingTo: stageFD, maximumSize: maximumSize, checksCancellation: true)
+            guard copied.size == expectedSize else { throw FileStoreError.sizeMismatch }
             guard fsync(stageFD) == 0 else { throw fileStoreError() }
-            return StagedArtifact(name: stage.name, identity: stage.identity, stagePath: stage.relativePath, sha256: hasher.finalize().map { String(format: "%02x", $0) }.joined(), size: total)
+            return StagedArtifact(name: stage.name, identity: stage.identity, stagePath: stage.relativePath, sha256: copied.sha256, size: copied.size)
         } catch {
             try? discard(stage)
             throw error
@@ -462,14 +448,26 @@ public actor FileStore {
     }
 
     private func sha256(of fd: Int32) throws -> String {
+        try hashContents(of: fd).sha256
+    }
+
+    private func hashContents(of fd: Int32, copyingTo destinationFD: Int32? = nil, maximumSize: Int64? = nil, checksCancellation: Bool = false) throws -> (sha256: String, size: Int64) {
         hashCount += 1
         let duplicate = dup(fd)
         guard duplicate >= 0 else { throw FileStoreError.ioFailure }
         let handle = FileHandle(fileDescriptor: duplicate, closeOnDealloc: true)
         defer { try? handle.close() }
         try handle.seek(toOffset: 0)
+        var total: Int64 = 0
         var hash = SHA256()
-        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty { hash.update(data: chunk) }
-        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+            if checksCancellation { try Task.checkCancellation() }
+            total += Int64(chunk.count)
+            if let maximumSize, total > maximumSize { throw FileStoreError.tooLarge }
+            hash.update(data: chunk)
+            if let destinationFD { try Self.write(chunk, to: destinationFD) }
+        }
+        if checksCancellation { try Task.checkCancellation() }
+        return (hash.finalize().map { String(format: "%02x", $0) }.joined(), total)
     }
 }

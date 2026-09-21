@@ -260,7 +260,7 @@ struct MenuBarSnapshot: Sendable {
     private let operationGate = RootOperationGate()
     private let apiClient: WeBeepAPIClient
     private let credentialVault = CredentialVault(read: FileTokenStore.load, write: FileTokenStore.save)
-    private let notificationCoordinator = SyncNotificationCoordinator()
+    private let notificationCoordinator: SyncNotificationCoordinator
     private var backgroundScheduler: NSBackgroundActivityScheduler?
     private var syncTask: Task<Void, Never>?
     private var activeOperationID: UUID? {
@@ -280,6 +280,7 @@ struct MenuBarSnapshot: Sendable {
 
     override init() {
         hasStoredCredential = false
+        notificationCoordinator = SyncNotificationCoordinator(defaults: Self.defaults)
         let resolvedRootURL = Self.storedRootURL()
         rootURL = resolvedRootURL
         needsOnboarding = Self.resolveNeedsOnboarding(existingRootURL: resolvedRootURL, onboardingAlreadyCompleted: Self.defaults.bool(forKey: Self.onboardingCompletedKey))
@@ -1060,7 +1061,7 @@ struct MenuBarSnapshot: Sendable {
                 defer { PerformanceTrace.shared.end("scheduler.callback", category: .scheduler, state: trace) }
                 let outcome = await self?.runAutomaticSync() ?? .finished
                 completion(outcome.schedulerResult)
-                if self?.automaticSyncInterval == 86_400 {
+                if self?.automaticSyncInterval == 86_400, !outcome.isDeferred {
                     self?.backgroundScheduler?.invalidate()
                     self?.backgroundScheduler = nil
                     self?.scheduledConfiguration = nil
@@ -1072,8 +1073,8 @@ struct MenuBarSnapshot: Sendable {
     }
 
     private func runAutomaticSync() async -> AutomaticSyncOutcome {
-        guard !ProcessInfo.processInfo.isLowPowerModeEnabled else { return .finished }
-        guard activeOperationID == nil else { return .finished }
+        guard !ProcessInfo.processInfo.isLowPowerModeEnabled else { return .deferred }
+        guard activeOperationID == nil else { return .deferred }
         guard let rootURL, let rootID, let database, accountState == .connected, !recoveryBlocked else { return .finished }
         let operationID = UUID()
         activeOperationID = operationID
@@ -1386,6 +1387,10 @@ enum LoginWindowError: Error { case cancelled }
 
 private enum AutomaticSyncOutcome {
     case finished, deferred, cancelled
+
+    var isDeferred: Bool {
+        if case .deferred = self { true } else { false }
+    }
 
     var schedulerResult: NSBackgroundActivityScheduler.Result {
         switch self {
