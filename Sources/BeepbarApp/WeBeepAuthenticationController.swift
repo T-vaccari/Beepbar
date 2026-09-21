@@ -265,6 +265,7 @@ struct MenuBarSnapshot: Sendable {
     private let credentialVault = CredentialVault(read: FileTokenStore.load, write: FileTokenStore.save)
     private let notificationCoordinator: SyncNotificationCoordinator
     private var backgroundScheduler: NSBackgroundActivityScheduler?
+    private var bootstrapTask: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
     private var activeOperationID: UUID? {
         didSet { refreshMenuBarSnapshot() }
@@ -341,7 +342,7 @@ struct MenuBarSnapshot: Sendable {
         let rootID = self.rootID
         let operationGate = self.operationGate
         let credentialVault = self.credentialVault
-        Task { [weak self] in
+        bootstrapTask = Task { [weak self] in
             let trace = PerformanceTrace.shared.begin("bootstrap.total", category: .bootstrap)
             defer { PerformanceTrace.shared.end("bootstrap.total", category: .bootstrap, state: trace) }
             do {
@@ -536,7 +537,9 @@ struct MenuBarSnapshot: Sendable {
         guard !isSyncActive else { return }
         Task { [weak self] in
             do {
-                guard let self, let database else { throw SyncDatabaseError.open }
+                guard let self else { return }
+                await self.bootstrapTask?.value
+                guard let database = self.database else { throw SyncDatabaseError.open }
                 _ = try FileStore(root: selectedURL)
                 let selectedID = try await database.rootID(canonicalPath: selectedURL.path) ?? UUID()
                 try await database.registerRoot(id: selectedID, canonicalPath: selectedURL.path)
@@ -629,23 +632,31 @@ struct MenuBarSnapshot: Sendable {
         }
 #endif
         guard !recoveryBlocked else { setSyncState(.recoveryBlocked); return }
-        let selected = courses.filter { enabledCourseIDs.contains($0.id) }
-        guard !selected.isEmpty else { setSyncState(.readyUnchecked); return }
-        guard let database else { return }
-        guard let rootURL, let rootID else { setSyncState(.needsFolder); return }
         guard activeOperationID == nil else { return }
         let operationID = UUID()
         activeOperationID = operationID
         setSyncState(.checking)
-        let targets = selected.map { SyncTarget(courseID: $0.id, localFolder: folder(for: $0)) }
-        let apiClient = self.apiClient
-        let downloader = self.downloader
-        let gate = operationGate
         syncTask = Task { [weak self] in
             do {
                 guard let self else { return }
+                await self.bootstrapTask?.value
+                try Task.checkCancellation()
+                guard self.activeOperationID == operationID else { return }
+                let selected = self.courses.filter { self.enabledCourseIDs.contains($0.id) }
+                guard !selected.isEmpty else {
+                    self.setSyncState(.readyUnchecked)
+                    self.endOperation(operationID)
+                    return
+                }
+                guard let database = self.database else { throw SyncDatabaseError.open }
+                guard let rootURL = self.rootURL, let rootID = self.rootID else {
+                    self.setSyncState(.needsFolder)
+                    self.endOperation(operationID)
+                    return
+                }
+                let targets = selected.map { SyncTarget(courseID: $0.id, localFolder: self.folder(for: $0)) }
                 let token = try await self.credentialVault.load()
-                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient, downloader: downloader)
+                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: self.operationGate, apiClient: self.apiClient, downloader: self.downloader)
                 await self.beginTransfer(operationID, automatic: false)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .manual) { [weak self] progress in
                     await self?.progressStore.publish(progress)
@@ -756,6 +767,8 @@ struct MenuBarSnapshot: Sendable {
             defer { self?.isLoadingCourses = false }
             do {
                 guard let self else { return }
+                await self.bootstrapTask?.value
+                try Task.checkCancellation()
                 let token = try await self.credentialVault.load()
                 let siteInfo: WeBeepSiteInfo
                 if let existing = self.siteInfo {
