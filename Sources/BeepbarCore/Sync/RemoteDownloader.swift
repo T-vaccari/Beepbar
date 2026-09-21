@@ -1,6 +1,9 @@
 import Foundation
 
 public enum RemoteDownloadError: Error, Sendable, Equatable {
+    case unsupportedFile
+    case missingURL
+    case invalidSize
     case unsafeURL
     case unexpectedRedirect
     case transport(Int)
@@ -63,7 +66,10 @@ public final class RemoteDownloader: @unchecked Sendable {
     }
 
     public func download(_ file: RemoteFileCandidate, token: String, access: NetworkAccess) async throws -> DownloadedRemoteFile {
-        guard file.isSupported, let url = file.downloadURL, file.size >= 0, file.size <= maximumSize else { throw RemoteDownloadError.tooLarge }
+        guard file.isSupported else { throw RemoteDownloadError.unsupportedFile }
+        guard let url = file.downloadURL else { throw RemoteDownloadError.missingURL }
+        guard file.size >= 0 else { throw RemoteDownloadError.invalidSize }
+        guard file.size <= maximumSize else { throw RemoteDownloadError.tooLarge }
         var request = try Self.request(url: url, token: token, policy: policy)
         request.allowsExpensiveNetworkAccess = access.allowsExpensiveNetworkAccess
         request.allowsConstrainedNetworkAccess = access.allowsConstrainedNetworkAccess

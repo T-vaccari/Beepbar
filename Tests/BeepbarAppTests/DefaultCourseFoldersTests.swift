@@ -33,4 +33,35 @@ struct DefaultCourseFoldersTests {
     @Test func emptyCourseListYieldsEmptyMap() {
         #expect(WeBeepAuthenticationController.defaultFolders(for: []).isEmpty)
     }
+
+    @Test func identicalNamesUseIDAsAStrictTieBreaker() {
+        let ordered = WeBeepAuthenticationController.orderedForDisplay([
+            course(3, "Analisi"), course(1, "Analisi"), course(2, "Analisi")
+        ], enabledCourseIDs: [])
+        #expect(ordered.map(\.id) == [1, 2, 3])
+    }
+
+    @Test func progressDetailIncludesCompletedAndTotalFiles() {
+        let progress = SyncProgress(completed: 3, total: 10, installed: 2, preservedLocal: 0, unchanged: 1, conflicts: 0, failures: 0)
+        #expect(WeBeepAuthenticationController.progressDetail(progress) == "3 di 10 file")
+    }
+
+    @Test func newRootKeepsCurrentSelectionsForAvailableCourses() {
+        let restored = WeBeepAuthenticationController.restoredEnabledCourseIDs(
+            scopes: [], current: [1, 3, 99], remoteIDs: [1, 2, 3]
+        )
+        #expect(restored == [1, 3])
+    }
+
+    @Test func existingRootUsesPersistedSelections() {
+        let rootID = UUID()
+        let scopes = [
+            SyncScope(rootID: rootID, courseID: 1, displayName: "One", localFolder: "One", enabled: false),
+            SyncScope(rootID: rootID, courseID: 2, displayName: "Two", localFolder: "Two", enabled: true),
+        ]
+        let restored = WeBeepAuthenticationController.restoredEnabledCourseIDs(
+            scopes: scopes, current: [1], remoteIDs: [1, 2]
+        )
+        #expect(restored == [2])
+    }
 }

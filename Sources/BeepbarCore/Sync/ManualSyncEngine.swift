@@ -27,34 +27,6 @@ public actor ManualSyncEngine {
         transactions = SyncTransactionCoordinator(database: database, fileStore: fileStore)
     }
 
-    public func sync(file: RemoteFileCandidate, courseFolder: String, token: String) async throws -> ManualSyncOutcome {
-        try Task.checkCancellation()
-        guard file.isSupported else { return .skipped(file.ineligibilityReason ?? "materiale non supportato") }
-        guard !(try await database.hasOpenConflict(rootID: rootID, remoteID: file.id, revision: file.observedRevision)) else { return .skipped("conflitto già aperto") }
-        let baseline = try await database.baseline(rootID: rootID, remoteID: file.id)
-        let destination = try baseline?.relativePath ?? LocalPathPolicy.destination(courseFolder: courseFolder, file: file)
-        let local = try await fileStore.inspect(destination)
-
-        if let baseline, baseline.remoteRevision == file.observedRevision, case .present = local {
-            return try await apply(SyncPlanner.decide(baseline: baseline, local: local, remote: RemoteState(sha256: baseline.sha256, revision: file.observedRevision)), remoteID: file.id, baseline: baseline, destination: destination, local: local, remote: RemoteState(sha256: baseline.sha256, revision: file.observedRevision), artifact: nil)
-        }
-
-        try Task.checkCancellation()
-        let downloaded = try await downloader.download(file, token: token, access: networkAccess)
-        // The import copies the body out of the temporary file, so nothing else ever removes it.
-        defer { try? FileManager.default.removeItem(at: downloaded.temporaryURL) }
-        try Task.checkCancellation()
-        let artifact = try await fileStore.importDownloadedFile(at: downloaded.temporaryURL, expectedSize: downloaded.expectedSize, maximumSize: 1_073_741_824)
-        let remote = RemoteState(sha256: artifact.sha256, revision: file.observedRevision)
-        do {
-            try Task.checkCancellation()
-            return try await apply(SyncPlanner.decide(baseline: baseline, local: local, remote: remote), remoteID: file.id, baseline: baseline, destination: destination, local: local, remote: remote, artifact: artifact)
-        } catch {
-            try? await fileStore.discard(artifact)
-            throw error
-        }
-    }
-
     public func sync(file: RemoteFileCandidate, destination: RelativePath, token: String) async throws -> ManualSyncOutcome {
         try Task.checkCancellation()
         guard file.isSupported else { return .skipped(file.ineligibilityReason ?? "materiale non supportato") }

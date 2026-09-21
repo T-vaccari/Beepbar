@@ -26,22 +26,48 @@ public struct SyncedItem: Sendable, Equatable, Codable, Identifiable, Hashable {
     }
 }
 
+public struct FailedSyncItem: Sendable, Equatable, Codable, Identifiable, Hashable {
+    public let id: String
+    public let name: String
+    public let reason: String
+
+    public init(id: String, name: String, reason: String) {
+        self.id = id
+        self.name = name
+        self.reason = reason
+    }
+}
+
 public struct CourseSyncCount: Sendable, Equatable, Codable, Identifiable {
     public let courseID: Int64
     public let courseFolder: String
     public let added: Int
     public let updated: Int
     public let items: [SyncedItem]
+    public let failedItems: [FailedSyncItem]
 
     public var id: Int64 { courseID }
-    public var total: Int { added + updated }
+    public var total: Int { added + updated + failedItems.count }
 
-    public init(courseID: Int64, courseFolder: String, added: Int, updated: Int, items: [SyncedItem] = []) {
+    public init(courseID: Int64, courseFolder: String, added: Int, updated: Int, items: [SyncedItem] = [], failedItems: [FailedSyncItem] = []) {
         self.courseID = courseID
         self.courseFolder = courseFolder
         self.added = added
         self.updated = updated
         self.items = items
+        self.failedItems = failedItems
+    }
+
+    private enum CodingKeys: String, CodingKey { case courseID, courseFolder, added, updated, items, failedItems }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        courseID = try values.decode(Int64.self, forKey: .courseID)
+        courseFolder = try values.decode(String.self, forKey: .courseFolder)
+        added = try values.decode(Int.self, forKey: .added)
+        updated = try values.decode(Int.self, forKey: .updated)
+        items = try values.decodeIfPresent([SyncedItem].self, forKey: .items) ?? []
+        failedItems = try values.decodeIfPresent([FailedSyncItem].self, forKey: .failedItems) ?? []
     }
 }
 
@@ -125,13 +151,16 @@ public actor ManualSyncRun {
         var perCourseUpdated: [Int64: Int] = [:]
         var perCourseFolder: [Int64: String] = [:]
         var perCourseItems: [Int64: [SyncedItem]] = [:]
-        try await withThrowingTaskGroup(of: (PreparedSyncItem, ManualSyncOutcome?).self) { group in
+        var perCourseFailures: [Int64: [FailedSyncItem]] = [:]
+        var serviceFailures = 0
+        var firstServiceStatus: Int?
+        try await withThrowingTaskGroup(of: (PreparedSyncItem, ManualSyncOutcome?, String?, Int?).self) { group in
             var next = 0
             func enqueue(_ item: PreparedSyncItem) {
                 group.addTask { [rootID, database, fileStore, downloader, networkAccess] in
                     do {
                         let engine = ManualSyncEngine(rootID: rootID, database: database, fileStore: fileStore, downloader: downloader, networkAccess: networkAccess)
-                        return (item, try await engine.sync(file: item.remote, destination: item.destination, token: token))
+                        return (item, try await engine.sync(file: item.remote, destination: item.destination, token: token), nil, nil)
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch let error as RemoteDownloadError {
@@ -141,17 +170,27 @@ public actor ManualSyncRun {
                         case .transport(let status) where status == 401 || status == 403:
                             throw SyncDownloadError.authorizationRejected(status)
                         case .transport(let status) where status >= 500:
-                            throw WeBeepAPIError.transport(status)
+                            return (item, nil, "Errore del server (\(status)).", status)
+                        case .unsupportedFile:
+                            return (item, nil, "Formato non supportato.", nil)
+                        case .missingURL, .invalidSize:
+                            return (item, nil, "Metadati del file non validi.", nil)
+                        case .unsafeURL, .unexpectedRedirect:
+                            return (item, nil, "Indirizzo di download non sicuro.", nil)
+                        case .invalidResponse:
+                            return (item, nil, "Risposta di download non valida.", nil)
+                        case .tooLarge:
+                            return (item, nil, "File troppo grande.", nil)
                         default:
-                            return (item, nil)
+                            return (item, nil, "Download non riuscito.", nil)
                         }
                     } catch {
-                        return (item, nil)
+                        return (item, nil, "Impossibile salvare il file.", nil)
                     }
                 }
             }
             while next < min(maximumConcurrentDownloads, items.count) { enqueue(items[next]); next += 1 }
-            while let (item, outcome) = try await group.next() {
+            while let (item, outcome, failureReason, serviceStatus) = try await group.next() {
                 try Task.checkCancellation()
                 completed += 1
                 let courseID = item.remote.courseID
@@ -170,14 +209,22 @@ public actor ManualSyncRun {
                 case .preservedLocal?: preservedLocal += 1
                 case .unchanged?, .skipped?: unchanged += 1
                 case .conflict?: conflicts += 1
-                case nil: failures += 1
+                case nil:
+                    failures += 1
+                    perCourseFolder[courseID] = Self.courseFolder(for: item.destination)
+                    perCourseFailures[courseID, default: []].append(Self.failedItem(for: item, reason: failureReason ?? "Errore sconosciuto."))
+                    if let serviceStatus {
+                        serviceFailures += 1
+                        firstServiceStatus = firstServiceStatus ?? serviceStatus
+                    }
                 }
-                await progress(SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures, perCourse: Self.snapshotPerCourse(added: perCourseAdded, updated: perCourseUpdated, folders: perCourseFolder, items: perCourseItems)))
                 if next < items.count { enqueue(items[next]); next += 1 }
+                await progress(SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures))
             }
         }
         try Task.checkCancellation()
-        return SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures, perCourse: Self.snapshotPerCourse(added: perCourseAdded, updated: perCourseUpdated, folders: perCourseFolder, items: perCourseItems))
+        if !items.isEmpty, serviceFailures == items.count { throw WeBeepAPIError.transport(firstServiceStatus ?? 503) }
+        return SyncProgress(completed: completed, total: items.count, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: failures, perCourse: Self.snapshotPerCourse(added: perCourseAdded, updated: perCourseUpdated, folders: perCourseFolder, items: perCourseItems, failures: perCourseFailures))
     }
 
     static func courseFolder(for destination: RelativePath) -> String {
@@ -189,11 +236,17 @@ public actor ManualSyncRun {
         return SyncedItem(id: item.id, name: name, kind: kind)
     }
 
-    static func snapshotPerCourse(added: [Int64: Int], updated: [Int64: Int], folders: [Int64: String], items: [Int64: [SyncedItem]]) -> [CourseSyncCount] {
-        let ids = Set(added.keys).union(updated.keys)
+    static func failedItem(for item: PreparedSyncItem, reason: String) -> FailedSyncItem {
+        let name = item.destination.value.split(separator: "/").last.map(String.init) ?? item.destination.value
+        return FailedSyncItem(id: item.id, name: name, reason: reason)
+    }
+
+    static func snapshotPerCourse(added: [Int64: Int], updated: [Int64: Int], folders: [Int64: String], items: [Int64: [SyncedItem]], failures: [Int64: [FailedSyncItem]] = [:]) -> [CourseSyncCount] {
+        let ids = Set(added.keys).union(updated.keys).union(failures.keys)
         return ids.map { id in
             let sortedItems = (items[id] ?? []).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            return CourseSyncCount(courseID: id, courseFolder: folders[id] ?? "", added: added[id] ?? 0, updated: updated[id] ?? 0, items: sortedItems)
+            let sortedFailures = (failures[id] ?? []).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            return CourseSyncCount(courseID: id, courseFolder: folders[id] ?? "", added: added[id] ?? 0, updated: updated[id] ?? 0, items: sortedItems, failedItems: sortedFailures)
         }.sorted { $0.courseFolder.localizedStandardCompare($1.courseFolder) == .orderedAscending }
     }
 }

@@ -10,6 +10,7 @@ struct ConflictResolverTests {
         #expect(try String(contentsOf: fixture.destination, encoding: .utf8) == "local")
         #expect(try await fixture.database.conflicts(rootID: fixture.rootID).isEmpty)
         #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: "file")?.sha256 == fixture.conflict.remoteSHA256)
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: ".beepbar/conflicts/\(fixture.conflict.id.uuidString)").path))
     }
 
     @Test func usesRemoteOnlyWhenLocalIsUnchanged() async throws {

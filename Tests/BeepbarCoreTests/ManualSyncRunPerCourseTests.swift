@@ -46,6 +46,24 @@ struct ManualSyncRunPerCourseTests {
         #expect(zeta?.items.map(\.name) == ["Alpha.pdf", "Zeta.pdf"])
     }
 
+    @Test func snapshotPerCourseIncludesNamedFailures() {
+        let failures = [
+            FailedSyncItem(id: "b", name: "Zeta.pdf", reason: "Errore del server (503)."),
+            FailedSyncItem(id: "a", name: "Alpha.pdf", reason: "Risposta non valida."),
+        ]
+        let snapshot = ManualSyncRun.snapshotPerCourse(
+            added: [:],
+            updated: [:],
+            folders: [1: "Analisi"],
+            items: [:],
+            failures: [1: failures]
+        )
+
+        #expect(snapshot.count == 1)
+        #expect(snapshot[0].failedItems.map(\.name) == ["Alpha.pdf", "Zeta.pdf"])
+        #expect(snapshot[0].total == 2)
+    }
+
     @Test func snapshotPerCourseOmitsCoursesWithNoActivity() {
         let snapshot = ManualSyncRun.snapshotPerCourse(added: [:], updated: [:], folders: [1: "Untouched"], items: [:])
         #expect(snapshot.isEmpty)

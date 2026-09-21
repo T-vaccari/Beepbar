@@ -113,10 +113,24 @@ import Testing
         #expect(try Data(contentsOf: destination) == Data("changed".utf8))
     }
 
-    @Test func propagatesServerFailureDuringDownload() async throws {
+    @Test func oneServerFailureProducesAPartialResultWithTheFileName() async throws {
         let fixture = try await Fixture()
         defer { fixture.remove() }
         fixture.upstream.setStatus(course: 1, file: 0, status: 503)
+
+        let result = try await fixture.synchronize(targets: [fixture.targets[0]])
+
+        #expect(result.added == 99)
+        #expect(result.failures == 1)
+        let course = try #require(result.perCourse.first)
+        #expect(course.failedItems.map(\.name) == ["0.txt"])
+        #expect(course.failedItems.first?.reason == "Errore del server (503).")
+    }
+
+    @Test func allServerFailuresStillReportServiceUnavailable() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        for file in 0..<100 { fixture.upstream.setStatus(course: 1, file: file, status: 503) }
 
         await #expect(throws: WeBeepAPIError.transport(503)) {
             try await fixture.synchronize(targets: [fixture.targets[0]])
@@ -318,12 +332,14 @@ import Testing
         defer { fixture.remove() }
         fixture.upstream.downloadDelay = 0.01
         let recorder = ProgressRecorder()
-        _ = try await fixture.coordinator.synchronize(targets: [fixture.targets[0]], token: "test-token", mode: .manual) { update in recorder.append(update) }
+        let summary = try await fixture.coordinator.synchronize(targets: [fixture.targets[0]], token: "test-token", mode: .manual) { update in recorder.append(update) }
         let progress = recorder.values
         #expect(fixture.upstream.maximumActiveDownloads == 3)
         #expect(progress.count == 100)
         #expect(progress.enumerated().allSatisfy { $0.element.completed == $0.offset + 1 })
+        #expect(progress.allSatisfy { $0.perCourse.isEmpty })
         #expect(progress.last?.completed == progress.last?.total)
+        #expect(summary.perCourse.count == 1)
     }
 
     @Test func cancellationDuringStagingPreservesExistingFileAndBaseline() async throws {

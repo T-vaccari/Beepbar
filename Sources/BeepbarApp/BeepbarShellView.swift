@@ -17,7 +17,7 @@ struct BeepbarShellView: View {
                 Divider()
                 Group {
                     switch page {
-                    case .home: HomePage(authentication: authentication, open: open)
+                    case .home: HomePage(authentication: authentication, progressStore: authentication.progressStore, open: open)
                     case .settings: SettingsPage(authentication: authentication, back: { page = .home })
                     case .conflicts: ConflictsPage(authentication: authentication, back: { page = .home })
                     case .syncDetail: SyncDetailPage(authentication: authentication, back: { page = .home })
@@ -76,6 +76,7 @@ struct BeepbarShellView: View {
 
 private struct HomePage: View {
     @ObservedObject var authentication: WeBeepAuthenticationController
+    @ObservedObject var progressStore: SyncProgressStore
     let open: (BeepbarShellView.Page) -> Void
     @State private var editingCourseID: Int64?
     @State private var proposedFolder = ""
@@ -97,7 +98,7 @@ private struct HomePage: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Label(authentication.syncState.title, systemImage: authentication.syncState.systemImage)
                         .foregroundStyle(statusColor)
-                    Text(authentication.syncState.detail)
+                    Text(authentication.syncDetail)
                         .font(.caption).foregroundStyle(.secondary)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -240,8 +241,7 @@ private struct HomePage: View {
         Binding(
             get: { authentication.automaticSyncEnabled ? authentication.automaticSyncInterval : 0 },
             set: { interval in
-                authentication.setAutomaticSync(enabled: interval != 0)
-                if interval != 0 { authentication.setAutomaticSyncInterval(interval) }
+                authentication.setAutomaticSync(enabled: interval != 0, interval: interval == 0 ? nil : interval)
             }
         )
     }
@@ -404,12 +404,25 @@ private struct SyncDetailPage: View {
                                 }
                                 .padding(.vertical, 2)
                             }
+                            ForEach(course.failedItems) { item in
+                                HStack {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .foregroundStyle(.orange)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(item.name).font(.callout)
+                                        Text(item.reason).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.vertical, 2)
+                            }
                         } label: {
                             HStack {
                                 Text(course.courseFolder).font(.body.weight(.medium))
                                 Spacer()
                                 if course.added > 0 { Text(course.addedLabel).font(.caption).foregroundStyle(.secondary) }
                                 if course.updated > 0 { Text(course.updatedLabel).font(.caption).foregroundStyle(.secondary) }
+                                if !course.failedItems.isEmpty { Text("\(course.failedItems.count) non aggiornati").font(.caption).foregroundStyle(.orange) }
                             }
                             .padding(.vertical, 3)
                         }
