@@ -27,6 +27,7 @@ struct BeepbarApp: App {
     private var statusItemController: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        _ = UpdaterController.shared
         statusItemController = StatusItemController(authentication: authentication)
         guard authentication.needsOnboarding else { return }
         ConfigurationWindowController.shared.show(authentication)

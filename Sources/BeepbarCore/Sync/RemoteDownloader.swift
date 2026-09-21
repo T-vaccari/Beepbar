@@ -3,7 +3,6 @@ import Foundation
 public enum RemoteDownloadError: Error, Sendable, Equatable {
     case unsafeURL
     case unexpectedRedirect
-    case cancelled
     case transport(Int)
     case network(NetworkFailure)
     case invalidResponse
