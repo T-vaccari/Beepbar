@@ -1,8 +1,8 @@
 # Beepbar
 
-[![CI](https://github.com/T-vaccari/Beepbar/actions/workflows/ci.yml/badge.svg)](https://github.com/T-vaccari/Beepbar/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/T-vaccari/Beepbar?label=release)](https://github.com/T-vaccari/Beepbar/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/T-vaccari/Beepbar/total)](https://github.com/T-vaccari/Beepbar/releases)
+[![CI](https://github.com/tommaso-vaccari/Beepbar/actions/workflows/ci.yml/badge.svg)](https://github.com/tommaso-vaccari/Beepbar/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/tommaso-vaccari/Beepbar?label=release)](https://github.com/tommaso-vaccari/Beepbar/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/tommaso-vaccari/Beepbar/total)](https://github.com/tommaso-vaccari/Beepbar/releases)
 
 Has another syncing app ever **overwritten your annotated slides**? Tired of **renaming files** just to stop them from being replaced? Looking for a syncing app that's **super lightweight** and feels **native** to your macOS environment?
 
@@ -10,7 +10,7 @@ Beepbar solves exactly that. It never overwrites your local work: take notes dir
 
 ## TL;DR / Install
 
-1. [Download Beepbar.dmg](https://github.com/T-vaccari/Beepbar/releases/latest/download/00-Beepbar.dmg), double-click it, then drag Beepbar into Applications. This link always points to the newest release, built automatically from `main`.
+1. [Download Beepbar.dmg](https://github.com/tommaso-vaccari/Beepbar/releases/latest/download/00-Beepbar.dmg), double-click it, then drag Beepbar into Applications. This link always points to the newest release, built automatically from `main`.
 2. On first launch, right-click Beepbar and choose **Open**. If macOS blocks it, go to **System Settings > Privacy & Security** and choose **Open Anyway**.
 3. Open Beepbar from the menu bar, sign in to WeBeep in the browser, and choose the local sync folder.
 
@@ -79,7 +79,7 @@ CI runs the tests and builds an ad-hoc-signed arm64 DMG.
 
 ## Contributing
 
-Found a bug or have a feature request? [Open an issue](https://github.com/T-vaccari/Beepbar/issues). Pull requests are welcome too.
+Found a bug or have a feature request? [Open an issue](https://github.com/tommaso-vaccari/Beepbar/issues). Pull requests are welcome too.
 
 ## License
 
