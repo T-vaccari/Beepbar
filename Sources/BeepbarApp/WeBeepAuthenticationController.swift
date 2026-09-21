@@ -685,6 +685,16 @@ struct MenuBarSnapshot: Sendable {
         setSyncState(.cancelling)
     }
 
+    func prepareForTermination() -> Task<Void, Never>? {
+        backgroundScheduler?.invalidate()
+        backgroundScheduler = nil
+        scheduledConfiguration = nil
+        guard let syncTask else { return nil }
+        syncTask.cancel()
+        setSyncState(.cancelling)
+        return syncTask
+    }
+
     func refreshConflicts() {
         guard !isSyncActive else { return }
         guard let database, let rootID else { conflicts = []; return }

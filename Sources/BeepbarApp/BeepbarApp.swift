@@ -25,12 +25,34 @@ struct BeepbarApp: App {
     // removes the race entirely.
     let authentication = WeBeepAuthenticationController()
     private var statusItemController: StatusItemController?
+    private var terminationPending = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = UpdaterController.shared
         statusItemController = StatusItemController(authentication: authentication)
         guard authentication.needsOnboarding else { return }
         ConfigurationWindowController.shared.show(authentication)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let syncTask = authentication.prepareForTermination() else { return .terminateNow }
+        guard !terminationPending else { return .terminateLater }
+        terminationPending = true
+        Task { [weak self] in
+            await syncTask.value
+            self?.finishTermination()
+        }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            self?.finishTermination()
+        }
+        return .terminateLater
+    }
+
+    private func finishTermination() {
+        guard terminationPending else { return }
+        terminationPending = false
+        NSApp.reply(toApplicationShouldTerminate: true)
     }
 }
 
