@@ -259,6 +259,9 @@ struct MenuBarSnapshot: Sendable {
     private var database: SyncDatabase?
     private let operationGate = RootOperationGate()
     private let apiClient: WeBeepAPIClient
+    // One downloader for the whole app lifetime: a per-run one would leave its URLSession and
+    // delegate alive forever, since nothing invalidates them when a run ends.
+    private let downloader: RemoteDownloader
     private let credentialVault = CredentialVault(read: FileTokenStore.load, write: FileTokenStore.save)
     private let notificationCoordinator: SyncNotificationCoordinator
     private var backgroundScheduler: NSBackgroundActivityScheduler?
@@ -293,6 +296,7 @@ struct MenuBarSnapshot: Sendable {
         automaticDailyCheckTime = Self.dailyTime(Self.defaults.object(forKey: Self.autoSyncDailyTimeKey) as? Int)
         rootID = Self.storedRootID()
         apiClient = WeBeepAPIClient()
+        downloader = RemoteDownloader(policy: apiClient.policy)
         database = nil
         super.init()
 #if DEBUG
@@ -635,12 +639,13 @@ struct MenuBarSnapshot: Sendable {
         setSyncState(.checking)
         let targets = selected.map { SyncTarget(courseID: $0.id, localFolder: folder(for: $0)) }
         let apiClient = self.apiClient
+        let downloader = self.downloader
         let gate = operationGate
         syncTask = Task { [weak self] in
             do {
                 guard let self else { return }
                 let token = try await self.credentialVault.load()
-                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient)
+                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient, downloader: downloader)
                 await self.beginTransfer(operationID, automatic: false)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .manual) { [weak self] progress in
                     await self?.progressStore.publish(progress)
@@ -937,7 +942,7 @@ struct MenuBarSnapshot: Sendable {
         guard let database, let rootID else { return }
         guard let scopes = try? await database.scopes(rootID: rootID) else { return }
         let remoteIDs = Set(courses.map(\.id))
-        let scopesByCourse = Dictionary(uniqueKeysWithValues: scopes.map { ($0.courseID, $0) })
+        let scopesByCourse = Dictionary(scopes.map { ($0.courseID, $0) }, uniquingKeysWith: { first, _ in first })
         let defaults = Self.defaultFolders(for: courses)
         enabledCourseIDs = Set(scopes.lazy.filter { $0.enabled && remoteIDs.contains($0.courseID) }.map(\.courseID))
         for course in courses {
@@ -1005,11 +1010,11 @@ struct MenuBarSnapshot: Sendable {
     // full course name when two courses would otherwise share the same folder.
     nonisolated static func defaultFolders(for courses: [RemoteCourseSummary]) -> [Int64: String] {
         let names = Dictionary(grouping: courses, by: { LocalPathPolicy.defaultCourseFolder($0.displayName).precomposedStringWithCanonicalMapping.lowercased() })
-        return Dictionary(uniqueKeysWithValues: courses.map { course in
+        return Dictionary(courses.map { course -> (Int64, String) in
             let base = LocalPathPolicy.defaultCourseFolder(course.displayName)
             let duplicate = (names[base.precomposedStringWithCanonicalMapping.lowercased()]?.count ?? 0) > 1
             return (course.id, duplicate ? LocalPathPolicy.component(course.displayName) : base)
-        })
+        }, uniquingKeysWith: { first, _ in first })
     }
 
     private func finishReconciliation(progress: SyncProgress) async {
@@ -1089,12 +1094,13 @@ struct MenuBarSnapshot: Sendable {
         guard activeOperationID == operationID else { return .cancelled }
         let targets = automaticScopes.map { SyncTarget(courseID: $0.courseID, localFolder: $0.localFolder) }
         let apiClient = self.apiClient
+        let downloader = self.downloader
         let gate = operationGate
         let task = Task { [weak self] in
             do {
                 guard let self else { return }
                 let token = try await self.credentialVault.load(.nonInteractive)
-                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient)
+                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient, downloader: downloader)
                 await self.beginTransfer(operationID, automatic: true)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .automatic) { [weak self] progress in
                     await self?.progressStore.publish(progress)

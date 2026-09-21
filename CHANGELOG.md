@@ -18,10 +18,14 @@
 - Naming a course folder `.BEEPBAR`, or any other capitalisation of Beepbar's own hidden folder, is now refused instead of accepted. Because macOS folder names are not case-sensitive, such a folder was the same one Beepbar uses internally for downloads in progress and for conflict copies, so course materials were written into it and its contents could be overwritten or hidden from Finder.
 - Renaming a course folder to a name already taken by another folder now says so, and leaves the course renameable. The rename failed with a generic message and, worse, left the course stuck: every later attempt to rename it failed too, and the next launch reported a local recovery it could never complete.
 - When recovery does remain blocked, the menu bar now offers to retry it, and the message explains what to do. The only way out used to be choosing a different sync folder, which nothing on screen mentioned. Starting a synchronization while recovery is blocked is now refused explicitly instead of silently doing nothing.
+- Synchronization no longer fills the disk with leftover downloads. Every downloaded file was copied into place but its temporary copy was never removed, so a large sync could quietly take up twice the space it reported, and refused or interrupted downloads left their own leftovers behind; nothing cleaned them up until the Mac was restarted.
+- A course whose material carries an implausible modification date no longer makes Beepbar quit in the middle of a synchronization, on that run and on every retry. That single entry is now reported as unreadable and the rest of the course is synchronized normally.
+- Duplicate entries coming from WeBeep or from the local database no longer make Beepbar quit while preparing a synchronization or while restoring your course selection; the first entry is kept and the run continues.
 
 ### Performance
 
 - The course list stays responsive with many courses. Showing a single row used to recompute the default folder name of every course, compiling regular expressions from scratch each time, which meant tens of thousands of recompilations per redraw with a large course list. Those names are now computed once and the regular expressions are compiled once for the lifetime of the app.
+- Repeated synchronizations no longer make Beepbar heavier over time. Each run opened a new set of network connections and kept them alive for as long as the app was running, so memory and open connections grew with every manual and scheduled sync. All runs now share a single connection pool, and scheduled syncs keep staying off metered connections and honouring Low Data Mode exactly as before.
 
 ### Added and changed
 

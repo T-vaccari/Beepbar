@@ -369,6 +369,23 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: fixture.root.path))
     }
 
+    @Test func automaticSyncDownloadsWithoutExpensiveOrConstrainedNetworkAccess() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.synchronize(targets: [fixture.targets[0]], mode: .automatic)
+        #expect(fixture.upstream.downloadCount > 0)
+        // A scheduled run must not spend a metered hotspot, nor ignore Low Data Mode.
+        #expect(fixture.upstream.downloadNetworkAccess == [RecordedNetworkAccess(expensive: false, constrained: false)])
+    }
+
+    @Test func manualSyncDownloadsOverAnyNetwork() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.synchronize(targets: [fixture.targets[0]], mode: .manual)
+        #expect(fixture.upstream.downloadCount > 0)
+        #expect(fixture.upstream.downloadNetworkAccess == [RecordedNetworkAccess(expensive: true, constrained: true)])
+    }
+
 private final class Fixture: @unchecked Sendable {
         let root: URL
         // The real app keeps the database in Application Support, outside the sync folder, so a
@@ -429,6 +446,11 @@ private final class ProgressRecorder: @unchecked Sendable {
     var values: [SyncProgress] { lock.withLock { storage } }
 }
 
+private struct RecordedNetworkAccess: Hashable {
+    let expensive: Bool
+    let constrained: Bool
+}
+
 private final class MutableFixtureUpstream: @unchecked Sendable {
     private struct File { var value: Data; var revision: String; var status = 200; var filename: String? = nil }
     private let lock = NSLock()
@@ -437,12 +459,14 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
     private var activeDownloads = 0
     private var peakDownloads = 0
     private var validations = 0
+    private var networkAccess: Set<RecordedNetworkAccess> = []
     var downloadDelay: TimeInterval = 0
     var tokenIsValid = true
 
     var downloadCount: Int { lock.withLock { downloads } }
     var maximumActiveDownloads: Int { lock.withLock { peakDownloads } }
     var validationCount: Int { lock.withLock { validations } }
+    var downloadNetworkAccess: Set<RecordedNetworkAccess> { lock.withLock { networkAccess } }
     func resetDownloadCount() { lock.withLock { downloads = 0 } }
 
     func populate(courses: Int, filesPerCourse: Int) {
@@ -488,6 +512,7 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
                 return (HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: ["Content-Length": "0"])!, Data(), 0, true)
             }
             downloads += 1
+            networkAccess.insert(RecordedNetworkAccess(expensive: request.allowsExpensiveNetworkAccess, constrained: request.allowsConstrainedNetworkAccess))
             activeDownloads += 1
             peakDownloads = max(peakDownloads, activeDownloads)
             return (HTTPURLResponse(url: url, statusCode: file.status, httpVersion: nil, headerFields: ["Content-Length": "\(file.value.count)"])!, file.value, downloadDelay, true)
