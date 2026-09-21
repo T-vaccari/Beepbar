@@ -48,10 +48,11 @@ struct BeepbarApp: App {
 /// MenuBarExtra→NSStatusItem rewrite (`ButtonAction.callAsFunction()` pre-#31,
 /// `menuNeedsUpdate(_:)` post-#31), always on the first status-item interaction after the Mac
 /// wakes from sleep. #31 relocated which `@objc` call site triggered the check; it didn't remove
-/// the check, so the crash reappeared. `menuNeedsUpdate(_:)` now reads only `authentication`'s
-/// `nonisolated(unsafe) menuBarSnapshot` — see its doc comment — and the action methods hand off
-/// to the main actor via `Task`, which enqueues onto the main executor instead of synchronously
-/// asserting that we're already on it, so no isolation check runs on this path at all.
+/// the check, so the crash reappeared. The delegate requirement itself is `@MainActor` in the
+/// AppKit SDK, so its implementation must be explicitly `nonisolated`; otherwise its generated
+/// Objective-C thunk performs the crashing check before the method body can read the snapshot.
+/// The method reads only `authentication`'s `nonisolated(unsafe) menuBarSnapshot` — see its doc
+/// comment — and the action methods hand off to the main actor via `Task`.
 final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let authentication: WeBeepAuthenticationController
@@ -68,7 +69,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         statusItem.menu = menu
     }
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
+    nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let snapshot = authentication.menuBarSnapshot
 
