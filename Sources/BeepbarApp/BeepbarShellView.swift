@@ -404,12 +404,25 @@ private struct SyncDetailPage: View {
                                 }
                                 .padding(.vertical, 2)
                             }
+                            ForEach(course.failedItems) { item in
+                                HStack {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .foregroundStyle(.orange)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(item.name).font(.callout)
+                                        Text(item.reason).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.vertical, 2)
+                            }
                         } label: {
                             HStack {
                                 Text(course.courseFolder).font(.body.weight(.medium))
                                 Spacer()
                                 if course.added > 0 { Text(course.addedLabel).font(.caption).foregroundStyle(.secondary) }
                                 if course.updated > 0 { Text(course.updatedLabel).font(.caption).foregroundStyle(.secondary) }
+                                if !course.failedItems.isEmpty { Text("\(course.failedItems.count) non aggiornati").font(.caption).foregroundStyle(.orange) }
                             }
                             .padding(.vertical, 3)
                         }

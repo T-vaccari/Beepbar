@@ -113,10 +113,24 @@ import Testing
         #expect(try Data(contentsOf: destination) == Data("changed".utf8))
     }
 
-    @Test func propagatesServerFailureDuringDownload() async throws {
+    @Test func oneServerFailureProducesAPartialResultWithTheFileName() async throws {
         let fixture = try await Fixture()
         defer { fixture.remove() }
         fixture.upstream.setStatus(course: 1, file: 0, status: 503)
+
+        let result = try await fixture.synchronize(targets: [fixture.targets[0]])
+
+        #expect(result.added == 99)
+        #expect(result.failures == 1)
+        let course = try #require(result.perCourse.first)
+        #expect(course.failedItems.map(\.name) == ["0.txt"])
+        #expect(course.failedItems.first?.reason == "Errore del server (503).")
+    }
+
+    @Test func allServerFailuresStillReportServiceUnavailable() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        for file in 0..<100 { fixture.upstream.setStatus(course: 1, file: file, status: 503) }
 
         await #expect(throws: WeBeepAPIError.transport(503)) {
             try await fixture.synchronize(targets: [fixture.targets[0]])
