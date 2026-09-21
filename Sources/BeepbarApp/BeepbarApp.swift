@@ -146,6 +146,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     func show(_ authentication: WeBeepAuthenticationController) {
         if window?.isKeyWindow != true {
+            if let appearanceTrace {
+                PerformanceTrace.shared.end("ui.configurationWindow", category: .ui, state: appearanceTrace)
+            }
             appearanceTrace = PerformanceTrace.shared.begin("ui.configurationWindow", category: .ui)
         }
         if let window {
@@ -178,92 +181,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         PerformanceTrace.shared.end("ui.configurationWindow", category: .ui, state: appearanceTrace)
         self.appearanceTrace = nil
     }
-}
-
-private struct BeepbarConfigurationView: View {
-    @ObservedObject var authentication: WeBeepAuthenticationController
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Beepbar").font(.title2.weight(.semibold))
-                    Text("Materiali WeBeep, in locale e senza sovrascritture silenziose.")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text(authentication.syncState.detail)
-                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
-                    .frame(maxWidth: 230)
-            }
-            .padding()
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    authenticationSection
-                    destinationSection
-                    coursesSection
-                }
-                .padding()
-            }
-        }
-    }
-
-    private var authenticationSection: some View {
-        GroupBox("1. Collegamento WeBeep") {
-            HStack {
-                            Text(authentication.accountState.title)
-                Spacer()
-                if !authentication.hasStoredCredential {
-                    Button("Accedi a WeBeep") { authentication.startLogin() }.disabled(authentication.isAuthenticating)
-                }
-                Button("Verifica") { authentication.validateConnection() }
-                    .disabled(!authentication.hasStoredCredential || authentication.isAuthenticating || authentication.isVerifying)
-            }.padding(.top, 4)
-        }
-    }
-
-    private var destinationSection: some View {
-        GroupBox("2. Cartella dei materiali") {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(authentication.rootURL?.path ?? "Scegli una cartella radice").textSelection(.enabled)
-                    Text("Beepbar creerà una sottocartella stabile per ogni corso selezionato.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button(authentication.rootURL == nil ? "Scegli cartella…" : "Cambia…") { authentication.chooseRoot() }
-            }.padding(.top, 4)
-        }
-    }
-
-    private var coursesSection: some View {
-        GroupBox("3. Corsi da sincronizzare") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Abilita esplicitamente i corsi che vuoi includere.").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Aggiorna corsi") { authentication.loadCourses() }
-                        .disabled(!authentication.hasStoredCredential || authentication.isLoadingCourses)
-                }
-                if authentication.courses.isEmpty {
-                    Text("Nessun corso caricato.").foregroundStyle(.secondary)
-                } else {
-                    ForEach(authentication.courses) { course in
-                        Toggle(isOn: Binding(get: { authentication.isCourseEnabled(course) }, set: { authentication.setCourse(course, enabled: $0) })) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(course.displayName)
-                                Text(course.shortName).font(.caption).foregroundStyle(.secondary)
-                                Text("Cartella: \(authentication.folder(for: course))")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }.toggleStyle(.checkbox)
-                    }
-                }
-            }.padding(.top, 4)
-        }
-    }
-
 }
 
 @MainActor final class ConflictWindowController: NSObject, NSWindowDelegate {

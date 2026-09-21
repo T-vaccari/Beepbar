@@ -218,9 +218,6 @@ struct MenuBarSnapshot: Sendable {
     @Published private(set) var courses: [RemoteCourseSummary] = [] {
         didSet { defaultCourseFolders = Self.defaultFolders(for: courses) }
     }
-    @Published private(set) var selectedCourse: RemoteCourseSummary?
-    @Published private(set) var contents: RemoteCourseContents?
-    @Published private(set) var isLoadingContents = false
     @Published private(set) var hasStoredCredential: Bool {
         didSet { refreshMenuBarSnapshot() }
     }
@@ -267,6 +264,7 @@ struct MenuBarSnapshot: Sendable {
     private var backgroundScheduler: NSBackgroundActivityScheduler?
     private var bootstrapTask: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
+    private var scopeWriteTask: Task<Void, Never>?
     private var activeOperationID: UUID? {
         didSet { refreshMenuBarSnapshot() }
     }
@@ -430,9 +428,19 @@ struct MenuBarSnapshot: Sendable {
     private func refreshMenuBarSnapshot() {
         menuBarSnapshot = MenuBarSnapshot(
             title: menuBarTitle,
-            detail: syncState.detail,
+            detail: syncDetail,
             actionTitle: menuBarActionTitle
         )
+    }
+
+    var syncDetail: String {
+        guard case .syncing = syncState else { return syncState.detail }
+        return Self.progressDetail(progressStore.progress) ?? syncState.detail
+    }
+
+    nonisolated static func progressDetail(_ progress: SyncProgress) -> String? {
+        guard progress.total > 0 else { return nil }
+        return "\(progress.completed) di \(progress.total) file"
     }
 
     private var menuBarAction: MenuBarAction {
@@ -578,15 +586,28 @@ struct MenuBarSnapshot: Sendable {
         if let database, let rootID {
             let folder = courseFolders[course.id] ?? defaultFolder(for: course)
             courseFolders[course.id] = folder
-            Task { try? await database.upsertScope(SyncScope(rootID: rootID, courseID: course.id, displayName: course.displayName, localFolder: folder, enabled: enabled)) }
+            let previousWrite = scopeWriteTask
+            scopeWriteTask = Task { [weak self] in
+                await previousWrite?.value
+                do {
+                    try await database.upsertScope(SyncScope(rootID: rootID, courseID: course.id, displayName: course.displayName, localFolder: folder, enabled: enabled))
+                } catch {
+                    self?.courseRenameErrors[course.id] = "Impossibile salvare la selezione del corso."
+                }
+            }
         }
     }
 
-    func setAutomaticSync(enabled: Bool) {
+    func setAutomaticSync(enabled: Bool, interval: Int? = nil) {
         guard !isSyncActive else { return }
+        let wasEnabled = automaticSyncEnabled
         automaticSyncEnabled = enabled
         Self.defaults.set(enabled, forKey: Self.autoSyncKey)
-        if enabled { Task { await notificationCoordinator.requestAuthorizationIfNeeded() } }
+        if let interval {
+            automaticSyncInterval = Self.validatedAutomaticInterval(interval)
+            Self.defaults.set(automaticSyncInterval, forKey: Self.autoSyncIntervalKey)
+        }
+        if enabled && !wasEnabled { Task { await notificationCoordinator.requestAuthorizationIfNeeded() } }
         configureBackgroundScheduler()
     }
     func setAutomaticSyncInterval(_ seconds: Int) { guard !isSyncActive else { return }; automaticSyncInterval = Self.validatedAutomaticInterval(seconds); Self.defaults.set(automaticSyncInterval, forKey: Self.autoSyncIntervalKey); configureBackgroundScheduler() }
@@ -621,6 +642,7 @@ struct MenuBarSnapshot: Sendable {
     }
 
     func clearRenameError(for course: RemoteCourseSummary) {
+        guard courseRenameErrors[course.id] != nil else { return }
         courseRenameErrors[course.id] = nil
     }
 
@@ -659,7 +681,7 @@ struct MenuBarSnapshot: Sendable {
                 let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: self.operationGate, apiClient: self.apiClient, downloader: self.downloader)
                 await self.beginTransfer(operationID, automatic: false)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .manual) { [weak self] progress in
-                    await self?.progressStore.publish(progress)
+                    await self?.publishProgress(progress)
                 }
                 await self.completeSync(operationID, summary: summary, automatic: false)
             } catch is CancellationError {
@@ -878,35 +900,9 @@ struct MenuBarSnapshot: Sendable {
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue ? url : nil
     }
 
-    func selectCourse(_ course: RemoteCourseSummary) { selectedCourse = course; contents = nil }
-
-    func loadContents() {
-        guard let selectedCourse, !isLoadingContents else { return }
-        let alert = NSAlert(); alert.messageText = "Mostrare i contenuti del corso?"
-        alert.informativeText = "Beepbar leggerà sezioni, moduli e nomi file del corso selezionato. Non scaricherà né salverà alcun file."
-        alert.addButton(withTitle: "Mostra contenuti"); alert.addButton(withTitle: "Annulla")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        isLoadingContents = true; status = "Caricamento contenuti in corso…"
-        Task { [weak self] in
-            defer { self?.isLoadingContents = false }
-            do {
-                guard let self else { return }
-                let token = try await self.credentialVault.load()
-                let contents = try await self.apiClient.fetchContents(courseID: selectedCourse.id, token: token)
-                guard self.selectedCourse?.id == selectedCourse.id else { return }
-                self.contents = contents
-                self.status = "Contenuti pronti."
-            } catch let error as WeBeepAPIError {
-                await self?.handleServiceFailure(error, automatic: false)
-            } catch let error as KeychainError {
-                await self?.handleKeychainError(error, background: false)
-            } catch { self?.status = "Impossibile caricare i contenuti. Nessun dato locale è stato modificato." }
-        }
-    }
-
     private func completeLogin(_ result: Result<URL, LoginWindowError>) {
         loginWindow = nil; isAuthenticating = false
-        siteInfo = nil; courses = []; selectedCourse = nil; contents = nil
+        siteInfo = nil; courses = []
         guard case let .success(callback) = result, let token = token(from: callback) else {
             status = "Accesso WeBeep annullato o callback non valido."; return
         }
@@ -967,7 +963,7 @@ struct MenuBarSnapshot: Sendable {
         let remoteIDs = Set(courses.map(\.id))
         let scopesByCourse = Dictionary(scopes.map { ($0.courseID, $0) }, uniquingKeysWith: { first, _ in first })
         let defaults = Self.defaultFolders(for: courses)
-        enabledCourseIDs = Set(scopes.lazy.filter { $0.enabled && remoteIDs.contains($0.courseID) }.map(\.courseID))
+        enabledCourseIDs = Self.restoredEnabledCourseIDs(scopes: scopes, current: enabledCourseIDs, remoteIDs: remoteIDs)
         for course in courses {
             if let scope = scopesByCourse[course.id], !scope.localFolder.isEmpty {
                 let replacement = LocalPathPolicy.generatedCourseFolderReplacement(
@@ -1007,6 +1003,13 @@ struct MenuBarSnapshot: Sendable {
                 }
             } else {
                 courseFolders[course.id] = defaults[course.id] ?? LocalPathPolicy.defaultCourseFolder(course.displayName)
+                if scopes.isEmpty {
+                    do {
+                        try await database.upsertScope(SyncScope(rootID: rootID, courseID: course.id, displayName: course.displayName, localFolder: courseFolders[course.id]!, enabled: enabledCourseIDs.contains(course.id)))
+                    } catch {
+                        courseRenameErrors[course.id] = "Impossibile salvare la selezione del corso."
+                    }
+                }
             }
         }
         Self.defaults.set(enabledCourseIDs.map(String.init).sorted(), forKey: Self.enabledCoursesKey)
@@ -1020,13 +1023,19 @@ struct MenuBarSnapshot: Sendable {
         defaultCourseFolders[course.id] ?? LocalPathPolicy.defaultCourseFolder(course.displayName)
     }
 
-    static func orderedForDisplay(_ courses: [RemoteCourseSummary], enabledCourseIDs: Set<Int64>) -> [RemoteCourseSummary] {
+    nonisolated static func orderedForDisplay(_ courses: [RemoteCourseSummary], enabledCourseIDs: Set<Int64>) -> [RemoteCourseSummary] {
         courses.sorted { lhs, rhs in
             let lhsEnabled = enabledCourseIDs.contains(lhs.id)
             let rhsEnabled = enabledCourseIDs.contains(rhs.id)
             if lhsEnabled != rhsEnabled { return lhsEnabled }
-            return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending || (lhs.displayName == rhs.displayName && lhs.id < rhs.id)
+            let comparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
+            return comparison == .orderedSame ? lhs.id < rhs.id : comparison == .orderedAscending
         }
+    }
+
+    nonisolated static func restoredEnabledCourseIDs(scopes: [SyncScope], current: Set<Int64>, remoteIDs: Set<Int64>) -> Set<Int64> {
+        guard !scopes.isEmpty else { return current.intersection(remoteIDs) }
+        return Set(scopes.lazy.filter { $0.enabled && remoteIDs.contains($0.courseID) }.map(\.courseID))
     }
 
     // Pure and independently testable: the default folder for each course, falling back to the
@@ -1126,7 +1135,7 @@ struct MenuBarSnapshot: Sendable {
                 let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient, downloader: downloader)
                 await self.beginTransfer(operationID, automatic: true)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .automatic) { [weak self] progress in
-                    await self?.progressStore.publish(progress)
+                    await self?.publishProgress(progress)
                 }
                 await self.completeSync(operationID, summary: summary, automatic: true)
             } catch is CancellationError {
@@ -1151,6 +1160,11 @@ struct MenuBarSnapshot: Sendable {
         guard activeOperationID == operationID else { return }
         await progressStore.reset(automatic: automatic)
         setSyncState(.syncing)
+    }
+
+    private func publishProgress(_ progress: SyncProgress) async {
+        guard await progressStore.publish(progress) else { return }
+        refreshMenuBarSnapshot()
     }
 
     private func completeSync(_ operationID: UUID, summary: SyncProgress, automatic: Bool) async {
@@ -1257,9 +1271,10 @@ private struct BackgroundScheduleConfiguration: Equatable {
         await relay.reset(interval: automatic ? .seconds(1) : .milliseconds(200))
         progress = SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0)
     }
-    nonisolated func publish(_ value: SyncProgress) async {
-        guard let update = await relay.next(value) else { return }
+    nonisolated func publish(_ value: SyncProgress) async -> Bool {
+        guard let update = await relay.next(value) else { return false }
         await receive(update)
+        return true
     }
 
     private func receive(_ update: SyncProgress) {
