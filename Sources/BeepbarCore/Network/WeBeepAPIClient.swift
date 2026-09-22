@@ -142,9 +142,9 @@ public struct WeBeepServerPolicy: Sendable, Equatable {
     public let port: Int?
 
     public static let production = WeBeepServerPolicy(
-        endpoint: URL(string: "https://webeep.polimi.it/webservice/rest/server.php")!,
-        siteURL: URL(string: "https://webeep.polimi.it")!,
-        scheme: "https", host: "webeep.polimi.it", port: 443
+        endpoint: MoodleSite.polimi.serverPolicy.endpoint,
+        siteURL: MoodleSite.polimi.serverPolicy.siteURL,
+        scheme: "https", host: MoodleSite.polimi.serverPolicy.host, port: 443
     )
 
     public init(endpoint: URL, siteURL: URL, scheme: String, host: String, port: Int?) {

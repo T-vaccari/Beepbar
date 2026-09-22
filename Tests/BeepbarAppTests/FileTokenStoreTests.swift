@@ -48,7 +48,7 @@ final class FileTokenStoreTests: XCTestCase {
 
     func testLoadWithoutSaveThrowsAbsent() {
         XCTAssertThrowsError(try FileTokenStore.load(.interactive)) { error in
-            XCTAssertEqual(error as? KeychainError, .absent)
+            XCTAssertEqual(error as? CredentialStorageError, .absent)
         }
     }
 
@@ -105,7 +105,7 @@ final class FileTokenStoreTests: XCTestCase {
 
         XCTAssertFalse(try FileTokenStore.containsCredential())
         XCTAssertThrowsError(try FileTokenStore.load(.interactive)) { error in
-            XCTAssertEqual(error as? KeychainError, .corrupt)
+            XCTAssertEqual(error as? CredentialStorageError, .corrupt)
         }
     }
 

@@ -1,7 +1,5 @@
 import AppKit
 import Foundation
-import LocalAuthentication
-import Security
 import SwiftUI
 import os
 @preconcurrency import UserNotifications
@@ -13,8 +11,7 @@ enum AppFailure: Equatable {
     case connectivity
     case serviceUnavailable
     case incompatibleResponse
-    case keychainAuthorizationRequired
-    case keychainUnavailable
+    case credentialUnavailable
     case partialSync
     case local(String)
 
@@ -22,10 +19,9 @@ enum AppFailure: Equatable {
         switch self {
         case .authenticationExpired: "Accesso scaduto"
         case .connectivity: "Connessione assente"
-        case .serviceUnavailable: "WeBeep non disponibile"
-        case .incompatibleResponse: "Problema con WeBeep"
-        case .keychainAuthorizationRequired: "Autorizzazione richiesta"
-        case .keychainUnavailable: "Credenziale non disponibile"
+        case .serviceUnavailable: "Moodle non disponibile"
+        case .incompatibleResponse: "Problema con Moodle"
+        case .credentialUnavailable: "Credenziale non disponibile"
         case .partialSync: "Sincronizzazione incompleta"
         case .local: "Richiede attenzione"
         }
@@ -35,10 +31,9 @@ enum AppFailure: Equatable {
         switch self {
         case .authenticationExpired: "Accedi di nuovo per riprendere la sincronizzazione."
         case .connectivity: "Controlla la connessione. Beepbar riproverà automaticamente."
-        case .serviceUnavailable: "WeBeep non risponde. I materiali locali restano disponibili."
-        case .incompatibleResponse: "WeBeep ha restituito una risposta inattesa. Riprova più tardi."
-        case .keychainAuthorizationRequired: "Apri Beepbar e autorizza l'accesso al Portachiavi."
-        case .keychainUnavailable: "Beepbar non riesce a salvare o leggere la credenziale locale. Riprova più tardi."
+        case .serviceUnavailable: "Moodle non risponde. I materiali locali restano disponibili."
+        case .incompatibleResponse: "Moodle ha restituito una risposta inattesa. Riprova più tardi."
+        case .credentialUnavailable: "Beepbar non riesce a salvare o leggere la credenziale locale. Riprova più tardi."
         case .partialSync: "Alcuni materiali non sono stati aggiornati. I file esistenti sono al sicuro."
         case .local(let message): message
         }
@@ -62,7 +57,7 @@ enum AppSyncState: Equatable {
     var title: String {
         switch self {
         case .starting: "Avvio"
-        case .loginRequired: "Accedi a WeBeep"
+        case .loginRequired: "Accedi a Moodle"
         case .needsFolder: "Apri Impostazioni"
         case .readyUnchecked: "Pronto"
         case .checking: "Controllo aggiornamenti"
@@ -229,6 +224,7 @@ struct MenuBarSnapshot: Sendable {
     @Published private(set) var accountState: AccountState = .notConnected {
         didSet { refreshMenuBarSnapshot() }
     }
+    @Published private(set) var selectedSite: MoodleSite
     @Published private(set) var rootURL: URL? {
         didSet { refreshMenuBarSnapshot() }
     }
@@ -255,10 +251,10 @@ struct MenuBarSnapshot: Sendable {
     private var siteInfo: WeBeepSiteInfo?
     private var database: SyncDatabase?
     private let operationGate = RootOperationGate()
-    private let apiClient: WeBeepAPIClient
+    private var apiClient: WeBeepAPIClient
     // One downloader for the whole app lifetime: a per-run one would leave its URLSession and
     // delegate alive forever, since nothing invalidates them when a run ends.
-    private let downloader: RemoteDownloader
+    private var downloader: RemoteDownloader
     private let credentialVault = CredentialVault(read: FileTokenStore.load, write: FileTokenStore.save)
     private let notificationCoordinator: SyncNotificationCoordinator
     private var backgroundScheduler: NSBackgroundActivityScheduler?
@@ -281,6 +277,8 @@ struct MenuBarSnapshot: Sendable {
     }
 
     override init() {
+        let selectedSite = MoodleSite.site(id: Self.defaults.string(forKey: Self.selectedSiteKey))
+        self.selectedSite = selectedSite
         hasStoredCredential = false
         notificationCoordinator = SyncNotificationCoordinator(defaults: Self.defaults)
         let resolvedRootURL = Self.storedRootURL()
@@ -295,7 +293,7 @@ struct MenuBarSnapshot: Sendable {
         automaticSyncInterval = storedAutomaticSyncInterval
         Self.defaults.set(storedAutomaticSyncInterval, forKey: Self.autoSyncIntervalKey)
         rootID = Self.storedRootID()
-        apiClient = WeBeepAPIClient()
+        apiClient = WeBeepAPIClient(policy: selectedSite.serverPolicy)
         downloader = RemoteDownloader(policy: apiClient.policy)
         database = nil
         super.init()
@@ -384,7 +382,7 @@ struct MenuBarSnapshot: Sendable {
             await restorePersistedSyncState()
             configureBackgroundScheduler()
         case .unavailable(let error):
-            await handleKeychainError(error)
+            await handleCredentialStorageError(error)
         }
     }
 
@@ -421,8 +419,7 @@ struct MenuBarSnapshot: Sendable {
         case .cancelSync: "Annulla sincronizzazione"
         case .openConflicts: "Apri conflitti"
         case .signIn: accountState == .expired ? "Accedi di nuovo" : "Accedi"
-        case .authorizeKeychain: "Autorizza accesso"
-        case .retryKeychain: "Riprova"
+        case .retryCredentialStorage: "Riprova"
         case .retryRecovery: "Riprova recupero"
         case .openSettings: "Apri Impostazioni"
         case .synchronize: "Sincronizza ora"
@@ -449,10 +446,8 @@ struct MenuBarSnapshot: Sendable {
 
     private var menuBarAction: MenuBarAction {
         let account: MenuBarAccountCondition
-        if case .failed(.keychainAuthorizationRequired) = syncState {
-            account = .keychainAuthorizationRequired
-        } else if case .failed(.keychainUnavailable) = syncState {
-            account = .keychainUnavailable
+        if case .failed(.credentialUnavailable) = syncState {
+            account = .credentialUnavailable
         } else if accountState != .connected || !hasStoredCredential {
             account = .loginRequired
         } else {
@@ -518,7 +513,7 @@ struct MenuBarSnapshot: Sendable {
         case .cancelSync: cancelSynchronization()
         case .openConflicts: ConflictWindowController.shared.show(self)
         case .signIn: startLogin()
-        case .authorizeKeychain, .retryKeychain: validateConnection()
+        case .retryCredentialStorage: validateConnection()
         case .retryRecovery: retryRecovery()
         case .openSettings: ConfigurationWindowController.shared.show(self)
         case .synchronize: synchronizeNow()
@@ -686,8 +681,8 @@ struct MenuBarSnapshot: Sendable {
                 self?.cancelledSync(operationID)
             } catch let error as WeBeepAPIError {
                 await self?.failedSync(operationID, error: error, automatic: false)
-            } catch let error as KeychainError {
-                await self?.handleKeychainError(error, background: false)
+            } catch let error as CredentialStorageError {
+                await self?.handleCredentialStorageError(error)
                 self?.endOperation(operationID)
             } catch {
                 await self?.failedSync(operationID, error: nil, automatic: false)
@@ -758,15 +753,30 @@ struct MenuBarSnapshot: Sendable {
 
     func startLogin() {
         guard !isAuthenticating else { return }
-        isAuthenticating = true; status = "Autenticazione WeBeep in corso…"
-        loginWindow = LoginWindowController { [weak self] result in self?.completeLogin(result) }
+        isAuthenticating = true; status = "Autenticazione \(selectedSite.displayName) in corso…"
+        loginWindow = LoginWindowController(site: selectedSite) { [weak self] result in self?.completeLogin(result) }
         loginWindow?.showWindow(nil)
+    }
+
+    func selectUniversity(_ university: MoodleUniversity) {
+        guard !hasStoredCredential else { return }
+        selectSite(university == .polimi ? .polimi : MoodleSite.unipd[0])
+    }
+
+    func selectSite(_ site: MoodleSite) {
+        guard !hasStoredCredential, site != selectedSite else { return }
+        selectedSite = site
+        Self.defaults.set(site.id, forKey: Self.selectedSiteKey)
+        apiClient = WeBeepAPIClient(policy: site.serverPolicy)
+        downloader = RemoteDownloader(policy: site.serverPolicy)
+        siteInfo = nil
+        courses = []
     }
 
     func validateConnection() {
         guard !Self.isUIPreview else { return }
         guard !isVerifying else { return }
-        isVerifying = true; status = "Verifica connessione WeBeep in corso…"
+        isVerifying = true; status = "Verifica connessione Moodle in corso…"
         Task { [weak self] in
             defer { self?.isVerifying = false }
             do {
@@ -781,10 +791,10 @@ struct MenuBarSnapshot: Sendable {
                 self.configureBackgroundScheduler()
             } catch let error as WeBeepAPIError {
                 await self?.handleServiceFailure(error, automatic: false)
-            } catch let error as KeychainError {
-                await self?.handleKeychainError(error, background: false)
+            } catch let error as CredentialStorageError {
+                await self?.handleCredentialStorageError(error)
             } catch {
-                self?.setSyncState(.failed(.local("Non è stato possibile verificare WeBeep. Riprova più tardi.")))
+                self?.setSyncState(.failed(.local("Non è stato possibile verificare Moodle. Riprova più tardi.")))
             }
         }
     }
@@ -816,8 +826,8 @@ struct MenuBarSnapshot: Sendable {
                 await self.restorePersistedSyncState()
             } catch let error as WeBeepAPIError {
                 await self?.handleServiceFailure(error, automatic: false)
-            } catch let error as KeychainError {
-                await self?.handleKeychainError(error, background: false)
+            } catch let error as CredentialStorageError {
+                await self?.handleCredentialStorageError(error)
             } catch {
                 self?.setSyncState(.failed(.local("Non è stato possibile aggiornare i corsi. Riprova più tardi.")))
             }
@@ -833,6 +843,7 @@ struct MenuBarSnapshot: Sendable {
     private static let lastSuccessfulReconciliationKey = "io.github.tvaccari.beepbar.last-successful-reconciliation.v1."
     private static let lastSuccessfulSummaryKey = "io.github.tvaccari.beepbar.last-successful-summary.v1."
     private static let credentialExpiredKey = "io.github.tvaccari.beepbar.credential-expired.v1"
+    private static let selectedSiteKey = "io.github.tvaccari.beepbar.moodle-site.v1"
     private static var isUIPreview: Bool {
 #if DEBUG
         ProcessInfo.processInfo.arguments.contains("--ui-preview")
@@ -883,7 +894,7 @@ struct MenuBarSnapshot: Sendable {
         loginWindow = nil; isAuthenticating = false
         siteInfo = nil; courses = []
         guard case let .success(callback) = result, let token = token(from: callback) else {
-            status = "Accesso WeBeep annullato o callback non valido."; return
+            status = "Accesso Moodle annullato o callback non valido."; return
         }
         Task { [weak self] in
             do {
@@ -898,9 +909,9 @@ struct MenuBarSnapshot: Sendable {
                 self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
                 self.configureBackgroundScheduler()
             } catch let error as WeBeepAPIError where error == .invalidToken {
-                self?.status = "Il token ricevuto non è valido. Accedi di nuovo a WeBeep."
+                self?.status = "Il token ricevuto non è valido. Accedi di nuovo a Moodle."
             } catch {
-                self?.status = "Impossibile verificare l'accesso WeBeep. Il token non è stato salvato."
+                self?.status = "Impossibile verificare l'accesso Moodle. Il token non è stato salvato."
             }
         }
     }
@@ -1129,8 +1140,8 @@ struct MenuBarSnapshot: Sendable {
                 self?.cancelledSync(operationID)
             } catch let error as WeBeepAPIError {
                 await self?.failedSync(operationID, error: error, automatic: true)
-            } catch let error as KeychainError {
-                await self?.handleKeychainError(error, background: true)
+            } catch let error as CredentialStorageError {
+                await self?.handleCredentialStorageError(error)
                 self?.endOperation(operationID)
             } catch is RootOperationGateError {
                 self?.deferredAutomaticSync(operationID)
@@ -1214,23 +1225,15 @@ struct MenuBarSnapshot: Sendable {
         configureBackgroundScheduler()
     }
 
-    private func handleKeychainError(_ error: KeychainError, background: Bool = false) async {
+    private func handleCredentialStorageError(_ error: CredentialStorageError) async {
         await credentialVault.invalidate()
         switch error {
         case .absent, .corrupt:
             hasStoredCredential = false
             accountState = .notConnected
             setSyncState(.loginRequired)
-        case .interactionRequired, .accessDenied:
-            setSyncState(.failed(.keychainAuthorizationRequired))
-            if background {
-                backgroundScheduler?.invalidate()
-                backgroundScheduler = nil
-                scheduledConfiguration = nil
-                return
-            }
-        case .write, .read:
-            setSyncState(.failed(.keychainUnavailable))
+        case .write:
+            setSyncState(.failed(.credentialUnavailable))
         }
         configureBackgroundScheduler()
     }
@@ -1294,7 +1297,7 @@ private actor BootstrapService {
     enum CredentialStatus: Sendable {
         case present
         case absent
-        case unavailable(KeychainError)
+        case unavailable(CredentialStorageError)
     }
 
     func prepare(databaseDirectory: URL, rootURL: URL?, rootID: UUID?, gate: RootOperationGate, credentialVault: CredentialVault) async throws -> Result {
@@ -1302,7 +1305,6 @@ private actor BootstrapService {
         defer { PerformanceTrace.shared.end("bootstrap.databaseRecovery", category: .bootstrap, state: trace) }
         try FileManager.default.createDirectory(at: databaseDirectory, withIntermediateDirectories: true)
         let database = try SyncDatabase(url: databaseDirectory.appendingPathComponent("sync.sqlite"))
-        _ = await ProductionCredentialMigration.run(vault: credentialVault)
         let credential = try credentialStatus()
         guard let rootURL, let rootID else { return Result(database: database, recoveryBlocked: false, credential: credential) }
         let blocked = try await recoveryBlocked(rootURL: rootURL, rootID: rootID, database: database, gate: gate)
@@ -1319,7 +1321,7 @@ private actor BootstrapService {
     private func credentialStatus() throws -> CredentialStatus {
         do {
             return try FileTokenStore.containsCredential() ? .present : .absent
-        } catch let error as KeychainError {
+        } catch let error as CredentialStorageError {
             return .unavailable(error)
         }
     }
@@ -1341,9 +1343,9 @@ private enum AutomaticNotificationIssue: String {
 
     var title: String {
         switch self {
-        case .authenticationExpired: "Accesso WeBeep scaduto"
-        case .serviceUnavailable: "WeBeep non disponibile"
-        case .incompatibleResponse: "Problema con WeBeep"
+        case .authenticationExpired: "Accesso Moodle scaduto"
+        case .serviceUnavailable: "Moodle non disponibile"
+        case .incompatibleResponse: "Problema con Moodle"
         case .partialSync: "Sincronizzazione incompleta"
         }
     }
@@ -1351,8 +1353,8 @@ private enum AutomaticNotificationIssue: String {
     var body: String {
         switch self {
         case .authenticationExpired: "Apri Beepbar e accedi di nuovo per riprendere la sincronizzazione."
-        case .serviceUnavailable: "WeBeep non risponde. I materiali locali restano disponibili."
-        case .incompatibleResponse: "WeBeep ha restituito una risposta inattesa. Apri Beepbar per i dettagli."
+        case .serviceUnavailable: "Moodle non risponde. I materiali locali restano disponibili."
+        case .incompatibleResponse: "Moodle ha restituito una risposta inattesa. Apri Beepbar per i dettagli."
         case .partialSync: "Alcuni materiali non sono stati aggiornati. Apri Beepbar per i dettagli."
         }
     }
@@ -1444,8 +1446,8 @@ private enum AutomaticSyncOutcome {
 
 @MainActor final class LoginWindowController: NSWindowController, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
     private enum Phase { case signingIn, launchingMobile, finished }
-    private static let entryURL = URL(string: "https://webeep.polimi.it/auth/shibboleth/index.php")!
     private static let maximumAutomaticRetries = 2
+    private let site: MoodleSite
     private var phase: Phase = .signingIn
     private var completion: ((Result<URL, LoginWindowError>) -> Void)?
     private let webView: WKWebView
@@ -1453,7 +1455,8 @@ private enum AutomaticSyncOutcome {
     private let waitingOverlay: NSView
     private var automaticRetriesRemaining = LoginWindowController.maximumAutomaticRetries
 
-    init(completion: @escaping (Result<URL, LoginWindowError>) -> Void) {
+    init(site: MoodleSite, completion: @escaping (Result<URL, LoginWindowError>) -> Void) {
+        self.site = site
         self.completion = completion
         let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
         webView = WKWebView(frame: .zero, configuration: configuration)
@@ -1464,7 +1467,7 @@ private enum AutomaticSyncOutcome {
 
         let spinner = NSProgressIndicator(); spinner.style = .spinning; spinner.controlSize = .regular
         spinner.startAnimation(nil); spinner.translatesAutoresizingMaskIntoConstraints = false
-        let waitingLabel = NSTextField(wrappingLabelWithString: "In attesa di risposta da WeBeep, può richiedere qualche secondo.\nSe il caricamento non va a buon fine, chiudi e riprova, oppure premi Ricarica.")
+        let waitingLabel = NSTextField(wrappingLabelWithString: "In attesa di risposta da \(site.displayName), può richiedere qualche secondo.\nSe il caricamento non va a buon fine, chiudi e riprova, oppure premi Ricarica.")
         waitingLabel.alignment = .center; waitingLabel.textColor = .secondaryLabelColor
         waitingLabel.translatesAutoresizingMaskIntoConstraints = false
         let waitingStack = NSStackView(views: [spinner, waitingLabel])
@@ -1494,7 +1497,7 @@ private enum AutomaticSyncOutcome {
             retryButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
         ])
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 680), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Accesso WeBeep"; window.contentView = container
+        window.title = "Accesso \(site.displayName)"; window.contentView = container
         super.init(window: window); window.delegate = self; webView.navigationDelegate = self; webView.uiDelegate = self
         retryButton.target = self; retryButton.action = #selector(retryTapped)
     }
@@ -1508,14 +1511,14 @@ private enum AutomaticSyncOutcome {
         // fields silently reject typing and pasting.
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
-        webView.load(URLRequest(url: Self.entryURL))
+        webView.load(URLRequest(url: site.loginURL))
     }
 
     @objc private func retryTapped() {
         automaticRetriesRemaining = Self.maximumAutomaticRetries
         phase = .signingIn
         waitingOverlay.isHidden = false
-        webView.load(URLRequest(url: Self.entryURL))
+        webView.load(URLRequest(url: site.loginURL))
     }
 
     func windowWillClose(_ notification: Notification) { finish(.failure(.cancelled)) }
@@ -1557,7 +1560,7 @@ private enum AutomaticSyncOutcome {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self, self.phase != .finished else { return }
             self.phase = .signingIn
-            self.webView.load(URLRequest(url: Self.entryURL))
+            self.webView.load(URLRequest(url: self.site.loginURL))
         }
     }
 
@@ -1567,10 +1570,9 @@ private enum AutomaticSyncOutcome {
             decisionHandler(.cancel); guard phase == .launchingMobile else { return }; webView.stopLoading(); finish(.success(url)); return
         }
         guard url.scheme == "https" else { decisionHandler(.cancel); return }
-        if phase == .signingIn, url.host?.lowercased() == "webeep.polimi.it", url.path == "/my" || url.path == "/my/" {
+        if phase == .signingIn, site.isAuthenticatedLandingURL(url) {
             phase = .launchingMobile; decisionHandler(.cancel)
-            let url = URL(string: "https://webeep.polimi.it/admin/tool/mobile/launch.php?service=moodle_mobile_app&passport=\(UUID().uuidString)")!
-            webView.load(URLRequest(url: url)); return
+            webView.load(URLRequest(url: site.mobileLaunchURL)); return
         }
         decisionHandler(.allow)
     }
@@ -1586,20 +1588,8 @@ private enum AutomaticSyncOutcome {
     }
 }
 
-enum KeychainError: Error, Sendable, Equatable {
+enum CredentialStorageError: Error, Sendable, Equatable {
     case write
     case absent
-    case accessDenied
-    case interactionRequired
     case corrupt
-    case read(OSStatus)
-
-    init(status: OSStatus) {
-        switch status {
-        case errSecItemNotFound: self = .absent
-        case errSecInteractionNotAllowed: self = .interactionRequired
-        case errSecAuthFailed, errSecUserCanceled: self = .accessDenied
-        default: self = .read(status)
-        }
-    }
 }

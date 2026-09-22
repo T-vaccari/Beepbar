@@ -66,7 +66,7 @@ struct BeepbarShellView: View {
 
     private var pageSubtitle: String {
         switch page {
-        case .home: "Materiali WeBeep in locale"
+        case .home: "Materiali Moodle in locale"
         case .settings: "Impostazioni"
         case .conflicts: "Risolutore conflitti"
         case .syncDetail: "Ultima sincronizzazione"
@@ -119,7 +119,7 @@ private struct HomePage: View {
                     .controlSize(.large)
                     .disabled(authentication.isSyncActive ? false : !authentication.canSynchronize)
                 } else {
-                    Button("Accedi a WeBeep") { open(.settings) }
+                    Button("Accedi a Moodle") { open(.settings) }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                 }
@@ -159,7 +159,7 @@ private struct HomePage: View {
                         .disabled(!authentication.hasStoredCredential || authentication.isLoadingCourses || authentication.isSyncActive)
                 }
                 if authentication.courses.isEmpty {
-                    ContentUnavailableView("Nessun corso caricato", systemImage: "books.vertical", description: Text("Collega WeBeep e aggiorna l’elenco dei corsi."))
+                    ContentUnavailableView("Nessun corso caricato", systemImage: "books.vertical", description: Text("Collega Moodle e aggiorna l’elenco dei corsi."))
                         .frame(height: 130)
                 } else {
                     List {
@@ -268,18 +268,25 @@ private struct SettingsPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack { Button("Indietro", systemImage: "chevron.left", action: back); Spacer() }
-                GroupBox("Account WeBeep") {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(authentication.accountState.title)
-                            Text("Il token resta in locale, protetto da permessi ristretti.").font(.caption).foregroundStyle(.secondary)
+                GroupBox("Account Moodle") {
+                    VStack(spacing: 12) {
+                        if !authentication.hasStoredCredential {
+                            MoodleSitePicker(authentication: authentication)
                         }
-                        Spacer()
-                        if authentication.accountState != .connected {
-                            Button(authentication.accountState == .expired ? "Accedi di nuovo" : "Accedi") { authentication.startLogin() }.buttonStyle(.borderedProminent)
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(authentication.accountState.title)
+                                Text(authentication.selectedSite.displayName)
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Text("Il token resta in locale, protetto da permessi ristretti.").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if authentication.accountState != .connected {
+                                Button(authentication.accountState == .expired ? "Accedi di nuovo" : "Accedi") { authentication.startLogin() }.buttonStyle(.borderedProminent)
+                            }
+                            Button("Verifica") { authentication.validateConnection() }
+                                .disabled(!authentication.hasStoredCredential || authentication.isVerifying)
                         }
-                        Button("Verifica") { authentication.validateConnection() }
-                            .disabled(!authentication.hasStoredCredential || authentication.isVerifying)
                     }.padding(4)
                 }
                 GroupBox("Cartella dei materiali") {

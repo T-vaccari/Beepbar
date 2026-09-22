@@ -20,7 +20,7 @@ let package = Package(
         .executableTarget(
             name: "BeepbarApp",
             dependencies: ["BeepbarCore", .product(name: "Sparkle", package: "Sparkle")],
-            linkerSettings: [.linkedFramework("Security"), .linkedFramework("WebKit")]
+            linkerSettings: [.linkedFramework("WebKit")]
         ),
         .testTarget(name: "BeepbarCoreTests", dependencies: ["BeepbarCore"]),
         .testTarget(name: "BeepbarAppTests", dependencies: ["BeepbarApp"]),
