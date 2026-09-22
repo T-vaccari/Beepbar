@@ -3,16 +3,17 @@
 [![CI](https://github.com/tommaso-vaccari/Beepbar/actions/workflows/ci.yml/badge.svg)](https://github.com/tommaso-vaccari/Beepbar/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/tommaso-vaccari/Beepbar?label=release)](https://github.com/tommaso-vaccari/Beepbar/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/tommaso-vaccari/Beepbar/total)](https://github.com/tommaso-vaccari/Beepbar/releases)
+[![Website](https://img.shields.io/badge/website-BeepBar-1677ff)](https://www.tommasovaccari.com/beepbar)
 
 Has another syncing app ever **overwritten your annotated slides**? Tired of **renaming files** just to stop them from being replaced? Looking for a syncing app that's **super lightweight** and feels **native** to your macOS environment?
 
-Beepbar solves exactly that. It never overwrites your local work: take notes directly on a slide PDF, or edit a file on iPad/Mac after downloading it, and that copy is preserved instead of being silently replaced when WeBeep publishes an update. Built specifically for Apple Silicon, it stays native and ultra-lightweight in the background.
+Beepbar solves exactly that. It never overwrites your local work: take notes directly on a slide PDF, or edit a file on iPad/Mac after downloading it, and that copy is preserved instead of being silently replaced when your university platform publishes an update. Built specifically for Apple Silicon, it stays native and ultra-lightweight in the background.
 
 ## TL;DR / Install
 
 1. [Download Beepbar.dmg](https://github.com/tommaso-vaccari/Beepbar/releases/latest/download/00-Beepbar.dmg), double-click it, then drag Beepbar into Applications. This link always points to the newest release, built automatically from `main`.
 2. On first launch, right-click Beepbar and choose **Open**. If macOS blocks it, go to **System Settings > Privacy & Security** and choose **Open Anyway**.
-3. Open Beepbar from the menu bar, sign in to WeBeep in the browser, and choose the local sync folder.
+3. Open Beepbar from the menu bar, sign in to WeBeep or Moodle in the browser, and choose the local sync folder.
 
 `Beepbar.dmg` is ad-hoc signed so macOS can verify its integrity, but it is not Developer ID signed or notarized because this project does not use an Apple Developer account. The initial Gatekeeper step in step 2 is therefore expected. If it still blocks the app after moving it into Applications, use this fallback:
 
@@ -39,7 +40,7 @@ In a preliminary local measurement of the Release build, with automatic sync dis
 ## Features
 
 - Menu-bar app with clear sync status and contextual actions
-- Browser-based WeBeep login, with the token stored locally in a permissions-locked file (not the macOS Keychain, so it isn't tied to build-to-build signature changes)
+- Browser-based login for supported university platforms, with the token stored locally in a permissions-locked file (not the macOS Keychain, so it isn't tied to build-to-build signature changes)
 - Manual or configurable automatic sync
 - Controlled parallel downloads, byte-level progress, and real cancellation
 - Selectable sync root and editable course-folder names
