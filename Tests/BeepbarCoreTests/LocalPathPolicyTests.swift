@@ -10,7 +10,7 @@ struct LocalPathPolicyTests {
             storedCourseName: current,
             currentCourseName: current,
             courseID: 24_760
-        ) == "GPUS & HETEROGENEOUS SYSTEMS (PROGRAMMING MODELS AND ARCHITECTURES)")
+        ) == "gpus-heterogeneous-systems-programming-models-and-architectures")
         #expect(LocalPathPolicy.generatedCourseFolderReplacement(
             storedFolder: "My GPU course",
             storedCourseName: current,
@@ -82,7 +82,27 @@ struct LocalPathPolicyTests {
     }
 
     @Test func extractsForkStyleCourseFolder() {
-        #expect(LocalPathPolicy.defaultCourseFolder("054221 - FONDAMENTI DI CALCOLO (2025-26)") == "FONDAMENTI DI CALCOLO")
+        #expect(LocalPathPolicy.defaultCourseFolder("054221 - FONDAMENTI DI CALCOLO (2025-26)") == "fondamenti-di-calcolo")
+    }
+
+    @Test func removesUnipdMetadataFromCourseFolder() {
+        #expect(LocalPathPolicy.defaultCourseFolder("BIOENGINEERING FOR NEUROREHABILITATION 2025-2026 - INQ4105620") == "bioengineering-for-neurorehabilitation")
+    }
+
+    @Test func migratesGeneratedUnipdFolderButPreservesCustomFolder() {
+        let course = "BIOMARKERS, PRECISION MEDICINE AND DRUG DEVELOPMENT 2024-2025 - INQ1096858"
+        #expect(LocalPathPolicy.generatedCourseFolderReplacement(
+            storedFolder: course,
+            storedCourseName: course,
+            currentCourseName: course,
+            courseID: 10_968_58
+        ) == "biomarkers-precision-medicine-and-drug-development")
+        #expect(LocalPathPolicy.generatedCourseFolderReplacement(
+            storedFolder: "My biomarkers course",
+            storedCourseName: course,
+            currentCourseName: course,
+            courseID: 10_968_58
+        ) == nil)
     }
 
     @Test func treatsTheReservedNamespaceAsReservedRegardlessOfCase() {
