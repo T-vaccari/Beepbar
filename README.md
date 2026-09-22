@@ -61,7 +61,7 @@ Open conflicts show up as a badge in the menu bar and in the app's **Conflitti**
 
 ## Auto-updates
 
-Beepbar can check for new builds via [Sparkle](https://sparkle-project.org), against an appcast published alongside every push to `main`. It's off by default — enable **"Controlla automaticamente"** in Settings, or trigger a one-off check with **"Cerca aggiornamenti…"**. Every update is signed with an EdDSA key that never leaves this repo's secrets, and Sparkle verifies that signature before installing anything.
+Beepbar checks for new builds via [Sparkle](https://sparkle-project.org), against an appcast published alongside every push to `main`. Automatic checks are enabled by default and run every eight hours; you can disable **"Controlla automaticamente"** in Settings or trigger a one-off check with **"Cerca aggiornamenti…"**. Every update is signed with an EdDSA key that never leaves this repo's secrets, and Sparkle verifies that signature before installing anything.
 
 ## Requirements
 
