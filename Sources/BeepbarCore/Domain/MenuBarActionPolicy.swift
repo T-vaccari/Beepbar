@@ -1,16 +1,14 @@
 public enum MenuBarAccountCondition: Sendable, Equatable {
     case connected
     case loginRequired
-    case keychainAuthorizationRequired
-    case keychainUnavailable
+    case credentialUnavailable
 }
 
 public enum MenuBarAction: Sendable, Equatable {
     case cancelSync
     case openConflicts
     case signIn
-    case authorizeKeychain
-    case retryKeychain
+    case retryCredentialStorage
     case retryRecovery
     case openSettings
     case synchronize
@@ -31,8 +29,7 @@ public enum MenuBarActionPolicy {
         if hasConflicts { return .openConflicts }
         switch account {
         case .loginRequired: return .signIn
-        case .keychainAuthorizationRequired: return .authorizeKeychain
-        case .keychainUnavailable: return .retryKeychain
+        case .credentialUnavailable: return .retryCredentialStorage
         case .connected: return hasRoot ? .synchronize : .openSettings
         }
     }

@@ -9,8 +9,7 @@ struct MenuBarActionPolicyTests {
         (false, true, false, .loginRequired, true, .retryRecovery),
         (false, false, true, .connected, true, .openConflicts),
         (false, false, false, .loginRequired, true, .signIn),
-        (false, false, false, .keychainAuthorizationRequired, true, .authorizeKeychain),
-        (false, false, false, .keychainUnavailable, true, .retryKeychain),
+        (false, false, false, .credentialUnavailable, true, .retryCredentialStorage),
         (false, false, false, .connected, false, .openSettings),
         (false, false, false, .connected, true, .synchronize)
     ])

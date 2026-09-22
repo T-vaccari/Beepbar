@@ -1,14 +1,7 @@
 import Foundation
-import LocalAuthentication
-import Security
 import BeepbarCore
 
-/// File-backed token storage: replaces the Keychain as the app's ongoing credential store.
-///
-/// The WeBeep mobile token is a revocable session token, not a password, so trading Keychain's
-/// encryption-at-rest for a plain file avoids the macOS "BeepBar wants to use your confidential
-/// information…" prompt that Keychain items trigger whenever the requesting app's code signature
-/// changes between builds (dev/ad-hoc signing during development, before a stable Developer ID).
+/// File-backed storage for the revocable Moodle mobile token.
 enum FileTokenStore {
     /// Overridable only from tests (`@testable import`) so they can point at an isolated,
     /// throwaway subdirectory instead of the developer's real Application Support folder.
@@ -19,7 +12,7 @@ enum FileTokenStore {
 
     static func save(_ token: String) throws {
         let url = try fileURL()
-        guard let data = token.data(using: .utf8) else { throw KeychainError.write }
+        guard let data = token.data(using: .utf8) else { throw CredentialStorageError.write }
         cleanUpOrphanedTempFiles(in: url.deletingLastPathComponent())
         // Written with 0600 permissions from the moment the file is created (rather than
         // written-then-chmod'd), and moved into place atomically, so there is never a window
@@ -27,21 +20,21 @@ enum FileTokenStore {
         let tempURL = url.deletingLastPathComponent().appendingPathComponent("\(tempFilePrefix)\(UUID().uuidString)\(tempFileSuffix)")
         do {
             guard FileManager.default.createFile(atPath: tempURL.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
-                throw KeychainError.write
+                throw CredentialStorageError.write
             }
             _ = try FileManager.default.replaceItemAt(url, withItemAt: tempURL, options: .usingNewMetadataOnly)
         } catch {
             try? FileManager.default.removeItem(at: tempURL)
-            throw KeychainError.write
+            throw CredentialStorageError.write
         }
     }
 
     static func load(_ access: CredentialAccess) throws -> String {
         let url = try fileURL()
-        guard FileManager.default.fileExists(atPath: url.path) else { throw KeychainError.absent }
-        guard let data = try? Data(contentsOf: url) else { throw KeychainError.write }
+        guard FileManager.default.fileExists(atPath: url.path) else { throw CredentialStorageError.absent }
+        guard let data = try? Data(contentsOf: url) else { throw CredentialStorageError.write }
         guard let token = String(data: data, encoding: .utf8), !token.isEmpty else {
-            throw KeychainError.corrupt
+            throw CredentialStorageError.corrupt
         }
         return token
     }
@@ -49,7 +42,7 @@ enum FileTokenStore {
     static func containsCredential() throws -> Bool {
         let url = try fileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
-        guard let data = try? Data(contentsOf: url) else { throw KeychainError.write }
+        guard let data = try? Data(contentsOf: url) else { throw CredentialStorageError.write }
         guard let token = String(data: data, encoding: .utf8) else { return false }
         return !token.isEmpty
     }
@@ -81,7 +74,7 @@ enum FileTokenStore {
             try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
             return directory.appendingPathComponent(fileName)
         } catch {
-            throw KeychainError.write
+            throw CredentialStorageError.write
         }
     }
 
@@ -96,10 +89,6 @@ enum FileTokenStore {
     }
 }
 
-/// `--ui-preview-onboarding` intentionally exercises the real bootstrap flow (see
-/// `WeBeepAuthenticationController.isUIPreviewOnboarding`) so "Scegli cartella…" works against the
-/// real `chooseRoot()` code path. Anything that would otherwise touch the developer's *real*
-/// Keychain or credential file — not just where a new file lands — must check this first.
 enum PreviewMode {
     static var isActive: Bool {
 #if DEBUG
@@ -107,92 +96,5 @@ enum PreviewMode {
 #else
         false
 #endif
-    }
-}
-
-/// Read-only access to whatever token a previous version of the app left in the Keychain, kept
-/// around only long enough to migrate it into `FileTokenStore`. Nothing writes to the Keychain
-/// anymore.
-enum KeychainTokenStore {
-    private static let account = "webeep.mobile.token"
-    private static let service = "io.github.tvaccari.beepbar.auth.local.v3"
-    private static let legacyServices = ["io.github.tvaccari.beepbar.auth.local.v2", "io.github.tvaccari.beepbar"]
-
-    static func loadAnyCredential() throws -> String {
-        if let token = try? load(.interactive) {
-            return token
-        }
-        return try loadLegacyCredential()
-    }
-
-    static func deleteAllCredentials() {
-        _ = SecItemDelete(currentQuery() as CFDictionary)
-        for legacyService in legacyServices {
-            _ = SecItemDelete(legacyQuery(service: legacyService) as CFDictionary)
-        }
-    }
-
-    private static func load(_ access: CredentialAccess) throws -> String {
-        var query = currentQuery()
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        query[kSecReturnData as String] = true
-        if access == .nonInteractive {
-            let context = LAContext()
-            context.interactionNotAllowed = true
-            query[kSecUseAuthenticationContext as String] = context
-        }
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else { throw KeychainError(status: status) }
-        guard let data = result as? Data, let token = String(data: data, encoding: .utf8), !token.isEmpty else {
-            throw KeychainError.corrupt
-        }
-        return token
-    }
-
-    private static func currentQuery() -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-    }
-
-    private static func legacyQuery(service: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
-    }
-
-    private static func loadLegacyCredential() throws -> String {
-        for legacyService in legacyServices {
-            var query = legacyQuery(service: legacyService)
-            query[kSecMatchLimit as String] = kSecMatchLimitOne
-            query[kSecReturnData as String] = true
-            var result: CFTypeRef?
-            if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-               let data = result as? Data,
-               let token = String(data: data, encoding: .utf8),
-               !token.isEmpty {
-                return token
-            }
-        }
-        throw KeychainError.absent
-    }
-}
-
-enum ProductionCredentialMigration {
-    /// Runs through `vault` (the same `CredentialVault` actor `login`/`save` use) rather than
-    /// touching `FileTokenStore` directly, so this can never race a concurrent login: see
-    /// `CredentialVault.migrateFromLegacyStore`.
-    static func run(vault: CredentialVault) async -> CredentialMigrationOutcome {
-        // Redirecting FileTokenStore to an isolated directory during preview builds (see
-        // `FileTokenStore.applicationSupportDirectory()`) only protects where a *copy* lands —
-        // it does nothing to stop this migration from reading and then deleting the developer's
-        // real Keychain item. Skip the whole migration outright in that case.
-        guard !PreviewMode.isActive else { return .notNeeded }
-        return await vault.migrateFromLegacyStore(
-            destinationAlreadyHasCredential: FileTokenStore.containsCredential,
-            loadFromLegacyStore: KeychainTokenStore.loadAnyCredential,
-            deleteFromLegacyStore: KeychainTokenStore.deleteAllCredentials
-        )
     }
 }

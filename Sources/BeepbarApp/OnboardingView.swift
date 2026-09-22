@@ -1,4 +1,5 @@
 import SwiftUI
+import BeepbarCore
 
 struct OnboardingView: View {
     @ObservedObject var authentication: WeBeepAuthenticationController
@@ -30,7 +31,7 @@ struct OnboardingView: View {
                 .font(.system(size: 46))
                 .foregroundStyle(.tint)
             Text("Benvenuto in Beepbar").font(.title.weight(.semibold))
-            Text("Sincronizza i materiali WeBeep sul tuo Mac, senza sorprese.")
+            Text("Sincronizza i materiali Moodle sul tuo Mac, senza sorprese.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             VStack(alignment: .leading, spacing: 10) {
@@ -84,26 +85,31 @@ struct OnboardingView: View {
             accountBox
             VStack(alignment: .leading, spacing: 10) {
                 onboardingPoint(systemImage: "arrow.triangle.2.circlepath", text: "Frequenza del controllo automatico e aggiornamenti dell'app: sempre modificabili da Impostazioni.")
-                onboardingPoint(systemImage: "exclamationmark.triangle", text: "Se un file cambia sia sul tuo Mac sia su WeBeep, lo trovi nella sezione Conflitti: decidi tu quale versione tenere.")
+                onboardingPoint(systemImage: "exclamationmark.triangle", text: "Se un file cambia sia sul tuo Mac sia su Moodle, lo trovi nella sezione Conflitti: decidi tu quale versione tenere.")
             }
         }
     }
 
     private var accountBox: some View {
         GroupBox {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Accedi a WeBeep").font(.callout.weight(.medium))
-                    Text(authentication.hasStoredCredential ? "Account collegato." : "Necessario per iniziare a sincronizzare i corsi.")
-                        .font(.caption).foregroundStyle(.secondary)
+            VStack(spacing: 12) {
+                if !authentication.hasStoredCredential {
+                    MoodleSitePicker(authentication: authentication)
                 }
-                Spacer()
-                if authentication.hasStoredCredential {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                } else {
-                    Button("Accedi…") { authentication.startLogin() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(authentication.isAuthenticating)
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Accedi a \(authentication.selectedSite.displayName)").font(.callout.weight(.medium))
+                        Text(authentication.hasStoredCredential ? "Account collegato." : "Necessario per iniziare a sincronizzare i corsi.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if authentication.hasStoredCredential {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    } else {
+                        Button("Accedi…") { authentication.startLogin() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(authentication.isAuthenticating)
+                    }
                 }
             }
             .padding(6)
@@ -144,6 +150,33 @@ struct OnboardingView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .disabled(step == .folder && authentication.rootURL == nil)
+                }
+            }
+        }
+    }
+}
+
+struct MoodleSitePicker: View {
+    @ObservedObject var authentication: WeBeepAuthenticationController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Università", selection: Binding(
+                get: { authentication.selectedSite.university },
+                set: { authentication.selectUniversity($0) }
+            )) {
+                ForEach(MoodleUniversity.allCases) { university in
+                    Text(university.displayName).tag(university)
+                }
+            }
+            if authentication.selectedSite.university == .unipd {
+                Picker("Area Moodle", selection: Binding(
+                    get: { authentication.selectedSite },
+                    set: { authentication.selectSite($0) }
+                )) {
+                    ForEach(MoodleSite.unipd) { site in
+                        Text(site.displayName).tag(site)
+                    }
                 }
             }
         }
