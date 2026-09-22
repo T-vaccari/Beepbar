@@ -59,17 +59,17 @@ public actor SyncCoordinator {
             defer { PerformanceTrace.shared.end("sync.baselines", category: .database, state: trace) }
             baselines = try await database.baselines(rootID: rootID)
         }
-        let items: [PreparedSyncItem]
+        let prepared: (items: [PreparedSyncItem], baselines: [String: Baseline])
         do {
             let trace = PerformanceTrace.shared.begin("sync.metadata", category: .sync)
             defer { PerformanceTrace.shared.end("sync.metadata", category: .sync, state: trace) }
-            items = try await prepareItems(targets: targets, token: token, baselines: baselines, concurrency: mode.metadataConcurrency)
+            prepared = try await prepareItems(targets: targets, token: token, baselines: baselines, concurrency: mode.metadataConcurrency)
         }
         let work: [PreparedSyncItem]
         do {
             let trace = PerformanceTrace.shared.begin("sync.planning", category: .sync)
             defer { PerformanceTrace.shared.end("sync.planning", category: .sync, state: trace) }
-            work = try await itemsRequiringReconciliation(items, baselines: baselines)
+            work = try await itemsRequiringReconciliation(prepared.items, baselines: prepared.baselines)
         }
         guard !work.isEmpty else { return SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0) }
         let runner = ManualSyncRun(rootID: rootID, database: database, fileStore: fileStore, gate: gate, downloader: downloader, networkAccess: mode.networkAccess, maximumConcurrentDownloads: mode.downloadConcurrency)
@@ -97,7 +97,7 @@ public actor SyncCoordinator {
         }
     }
 
-    private func prepareItems(targets: [SyncTarget], token: String, baselines: [String: Baseline], concurrency: Int) async throws -> [PreparedSyncItem] {
+    private func prepareItems(targets: [SyncTarget], token: String, baselines: [String: Baseline], concurrency: Int) async throws -> (items: [PreparedSyncItem], baselines: [String: Baseline]) {
         try await withThrowingTaskGroup(of: (Int, [RemoteFileCandidate]).self) { group in
             var next = 0
             var fetched: [(Int, [RemoteFileCandidate])] = []
@@ -115,14 +115,33 @@ public actor SyncCoordinator {
                 fetched.append(result)
                 if next < targets.count { enqueue(next); next += 1 }
             }
+            var currentBaselines = baselines
+            var deferredIDs: Set<String> = []
+            var deferredLegacyIDs: Set<String> = []
+            for (index, files) in fetched.sorted(by: { $0.0 < $1.0 }) {
+                for file in files where currentBaselines[file.id] == nil {
+                    let preferred = try LocalPathPolicy.destination(courseFolder: targets[index].localFolder, file: file)
+                    let legacyIDs = currentBaselines.compactMap { remoteID, baseline in
+                        baseline.relativePath == preferred && Self.isLegacyRemoteID(remoteID, for: file) ? remoteID : nil
+                    }
+                    guard legacyIDs.count == 1, let legacyID = legacyIDs.first else { continue }
+                    guard let migrated = try await database.migrateLegacyBaseline(rootID: rootID, legacyRemoteID: legacyID, remoteID: file.id) else {
+                        deferredIDs.insert(file.id)
+                        deferredLegacyIDs.insert(legacyID)
+                        continue
+                    }
+                    currentBaselines.removeValue(forKey: legacyID)
+                    currentBaselines[file.id] = migrated
+                }
+            }
             var items: [PreparedSyncItem] = []
             // A baseline still claimed by a remote item owns its path whether or not the local file
             // survives, so a newcomer resolving to the same name gets a suffix instead of colliding.
             // Unclaimed (ghost) baselines only keep their name while a regular file is still there.
-            let claimedIDs = Set(fetched.flatMap { $0.1.map(\.id) })
+            let claimedIDs = Set(fetched.flatMap { $0.1.map(\.id) }).union(deferredLegacyIDs)
             var reservedPaths: Set<String> = []
             var ghostPaths: [RelativePath] = []
-            for (remoteID, baseline) in baselines {
+            for (remoteID, baseline) in currentBaselines {
                 if claimedIDs.contains(remoteID) {
                     reservedPaths.insert(Self.pathKey(baseline.relativePath))
                 } else {
@@ -133,10 +152,10 @@ public actor SyncCoordinator {
                 reservedPaths.insert(Self.pathKey(path))
             }
             for (index, files) in fetched.sorted(by: { $0.0 < $1.0 }) {
-                for file in files {
+                for file in files where !deferredIDs.contains(file.id) {
                     try Task.checkCancellation()
                     let destination: RelativePath
-                    if let baseline = baselines[file.id] {
+                    if let baseline = currentBaselines[file.id] {
                         destination = baseline.relativePath
                     } else {
                         let preferred = try LocalPathPolicy.destination(courseFolder: targets[index].localFolder, file: file)
@@ -146,7 +165,7 @@ public actor SyncCoordinator {
                 }
             }
             try validateNoDestinationCollisions(items)
-            return items
+            return (items, currentBaselines)
         }
     }
 
@@ -168,5 +187,12 @@ public actor SyncCoordinator {
 
     private static func pathKey(_ path: RelativePath) -> String {
         path.value.precomposedStringWithCanonicalMapping.lowercased()
+    }
+
+    private static func isLegacyRemoteID(_ remoteID: String, for file: RemoteFileCandidate) -> Bool {
+        let prefix = "\(file.courseID):\(file.moduleID):"
+        guard remoteID.hasPrefix(prefix) else { return false }
+        let path = remoteID.dropFirst(prefix.count)
+        return path.hasPrefix("/webservice/pluginfile.php/") || path.hasPrefix("/pluginfile.php/")
     }
 }

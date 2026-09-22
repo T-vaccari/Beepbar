@@ -38,6 +38,76 @@ import Testing
         #expect(second.updated == 1)
     }
 
+    @Test func migratesLegacyPluginURLBaselineAndUpdatesInPlace() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        let remoteID = fixture.remoteID(course: 1, file: 0)
+        let legacyID = fixture.legacyRemoteID(course: 1, file: 0)
+        let destination = try RelativePath("Course 1/Lezioni/0.txt")
+        let localURL = fixture.root.appending(path: destination.value)
+        try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: localURL)
+        let store = try FileStore(root: fixture.root)
+        guard case .present(let sha256) = try await store.inspect(destination) else { Issue.record("missing local file"); return }
+        try await fixture.database.upsertBaseline(rootID: fixture.rootID, baseline: Baseline(remoteID: legacyID, relativePath: destination, sha256: sha256, remoteRevision: String(repeating: "a", count: 40)))
+
+        fixture.upstream.resetDownloadCount()
+        let unchanged = try await fixture.synchronize(targets: [target])
+        #expect(unchanged.added == 99)
+        #expect(fixture.upstream.downloadCount == 99)
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: legacyID) == nil)
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: remoteID)?.relativePath == destination)
+
+        fixture.upstream.setFile(course: 1, file: 0, value: "remote update", revision: "2")
+        let updated = try await fixture.synchronize(targets: [target])
+        #expect(updated.updated == 1)
+        #expect(try Data(contentsOf: localURL) == Data("remote update".utf8))
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lezioni/0 (1).txt").path))
+    }
+
+    @Test func legacyPluginURLMigrationPreservesLocalEditsAsAConflict() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        let destination = try RelativePath("Course 1/Lezioni/0.txt")
+        let localURL = fixture.root.appending(path: destination.value)
+        try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("base".utf8).write(to: localURL)
+        let store = try FileStore(root: fixture.root)
+        guard case .present(let sha256) = try await store.inspect(destination) else { Issue.record("missing local file"); return }
+        try await fixture.database.upsertBaseline(rootID: fixture.rootID, baseline: Baseline(remoteID: fixture.legacyRemoteID(course: 1, file: 0), relativePath: destination, sha256: sha256, remoteRevision: "1"))
+        try Data("local edit".utf8).write(to: localURL)
+        fixture.upstream.setFile(course: 1, file: 0, value: "remote update", revision: "2")
+
+        let result = try await fixture.synchronize(targets: [target])
+
+        #expect(result.conflicts == 1)
+        #expect(try Data(contentsOf: localURL) == Data("local edit".utf8))
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lezioni/0 (1).txt").path))
+    }
+
+    @Test func defersLegacyMigrationWithOpenConflictWithoutCreatingASuffix() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let destination = try RelativePath("Course 1/Lezioni/0.txt")
+        let localURL = fixture.root.appending(path: destination.value)
+        try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("base".utf8).write(to: localURL)
+        let store = try FileStore(root: fixture.root)
+        guard case .present(let sha256) = try await store.inspect(destination) else { Issue.record("missing local file"); return }
+        let legacyID = fixture.legacyRemoteID(course: 1, file: 0)
+        try await fixture.database.upsertBaseline(rootID: fixture.rootID, baseline: Baseline(remoteID: legacyID, relativePath: destination, sha256: sha256, remoteRevision: "1"))
+        try await fixture.database.insertConflict(ConflictRecord(id: UUID(), rootID: fixture.rootID, remoteID: legacyID, relativePath: destination, incomingPath: try RelativePath(internal: ".beepbar/incoming/0.txt"), baseSHA256: sha256, localSHA256: sha256, remoteSHA256: String(repeating: "b", count: 64), remoteRevision: "2", detectedAt: Date(), status: .open))
+
+        let result = try await fixture.synchronize(targets: [fixture.targets[0]])
+
+        #expect(result.added == 99)
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: fixture.remoteID(course: 1, file: 0)) == nil)
+        #expect(FileManager.default.fileExists(atPath: localURL.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lezioni/0 (1).txt").path))
+    }
+
     @Test func aggregatesAddedAndUpdatedCountsPerCourse() async throws {
         let fixture = try await Fixture()
         defer { fixture.remove() }
@@ -247,7 +317,7 @@ import Testing
         #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: remoteID) == baseline)
     }
 
-    @Test func deletedLocalFileKeepsItsNameReservedForItsOwnRemoteItem() async throws {
+    @Test func duplicateLogicalRemoteIDsAreNotInstalled() async throws {
         let fixture = try await Fixture()
         defer { fixture.remove() }
         let target = fixture.targets[0]
@@ -258,13 +328,9 @@ import Testing
         fixture.upstream.addFile(course: 1, file: 100, filename: "0.txt", value: "newcomer", revision: "1")
 
         let result = try await fixture.synchronize(targets: [target])
-        let newcomer = try #require(await fixture.database.baseline(rootID: fixture.rootID, remoteID: fixture.remoteID(course: 1, file: 100)))
-
-        #expect(result.added == 2)
-        #expect(result.failures == 0)
-        #expect(try newcomer.relativePath == RelativePath("Course 1/Lezioni/0 (1).txt"))
-        #expect(try Data(contentsOf: destination) == Data("x".utf8))
-        #expect(try Data(contentsOf: fixture.root.appending(path: newcomer.relativePath.value)) == Data("newcomer".utf8))
+        #expect(result.total == 0)
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: fixture.remoteID(course: 1, file: 0))?.relativePath == baseline.relativePath)
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lezioni/0 (1).txt").path))
     }
 
     @Test func changedLocalAndRemoteFileConflictsAtTrackedLegacyDestination() async throws {
@@ -440,7 +506,8 @@ private final class Fixture: @unchecked Sendable {
             try await coordinator.synchronize(targets: targets ?? self.targets, token: "test-token", mode: mode) { _ in }
         }
 
-        func remoteID(course: Int64, file: Int) -> String { "\(course):\(course * 100):/webservice/pluginfile.php/\(course)/\(file).txt" }
+        func remoteID(course: Int64, file: Int) -> String { "\(course):\(course * 100):/:\(file).txt" }
+        func legacyRemoteID(course: Int64, file: Int) -> String { "\(course):\(course * 100):/webservice/pluginfile.php/\(course)/\(file).txt" }
 
         func stagingFiles() -> [URL] {
             let staging = root.appending(path: ".beepbar/staging", directoryHint: .isDirectory)
