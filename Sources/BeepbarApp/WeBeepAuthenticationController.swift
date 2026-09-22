@@ -3,6 +3,7 @@ import Foundation
 import LocalAuthentication
 import Security
 import SwiftUI
+import os
 @preconcurrency import UserNotifications
 import WebKit
 import BeepbarCore
@@ -235,7 +236,6 @@ struct MenuBarSnapshot: Sendable {
     @Published private(set) var enabledCourseIDs: Set<Int64>
     @Published private(set) var automaticSyncEnabled: Bool
     @Published private(set) var automaticSyncInterval: Int
-    @Published private(set) var automaticDailyCheckTime: Date
     @Published private(set) var recoveryBlocked = false {
         didSet { refreshMenuBarSnapshot() }
     }
@@ -291,13 +291,15 @@ struct MenuBarSnapshot: Sendable {
         }
         enabledCourseIDs = Set(Self.defaults.stringArray(forKey: Self.enabledCoursesKey)?.compactMap(Int64.init) ?? [])
         automaticSyncEnabled = Self.defaults.bool(forKey: Self.autoSyncKey)
-        automaticSyncInterval = Self.validatedAutomaticInterval(Self.defaults.object(forKey: Self.autoSyncIntervalKey) as? Int)
-        automaticDailyCheckTime = Self.dailyTime(Self.defaults.object(forKey: Self.autoSyncDailyTimeKey) as? Int)
+        let storedAutomaticSyncInterval = Self.validatedAutomaticInterval(Self.defaults.object(forKey: Self.autoSyncIntervalKey) as? Int)
+        automaticSyncInterval = storedAutomaticSyncInterval
+        Self.defaults.set(storedAutomaticSyncInterval, forKey: Self.autoSyncIntervalKey)
         rootID = Self.storedRootID()
         apiClient = WeBeepAPIClient()
         downloader = RemoteDownloader(policy: apiClient.policy)
         database = nil
         super.init()
+        BeepbarLog.lifecycle.notice("Controller initialized automaticSync=\(self.automaticSyncEnabled, privacy: .public) intervalSeconds=\(self.automaticSyncInterval, privacy: .public)")
 #if DEBUG
         if Self.isUIPreviewOnboarding {
             // Fall through to the real bootstrap flow below (with the isolated preview
@@ -348,7 +350,9 @@ struct MenuBarSnapshot: Sendable {
                 guard let self else { return }
                 self.database = result.database
                 await self.applyBootstrap(result)
+                BeepbarLog.lifecycle.notice("Bootstrap completed recoveryBlocked=\(result.recoveryBlocked, privacy: .public)")
             } catch {
+                BeepbarLog.lifecycle.error("Bootstrap failed errorType=\(String(reflecting: type(of: error)), privacy: .public)")
                 self?.setSyncState(.failed(.local("Impossibile preparare lo stato locale. Riapri Beepbar.")))
             }
         }
@@ -611,12 +615,6 @@ struct MenuBarSnapshot: Sendable {
         configureBackgroundScheduler()
     }
     func setAutomaticSyncInterval(_ seconds: Int) { guard !isSyncActive else { return }; automaticSyncInterval = Self.validatedAutomaticInterval(seconds); Self.defaults.set(automaticSyncInterval, forKey: Self.autoSyncIntervalKey); configureBackgroundScheduler() }
-    func setAutomaticDailyCheckTime(_ time: Date) {
-        guard !isSyncActive else { return }
-        automaticDailyCheckTime = Self.dailyTime(Self.secondsSinceMidnight(time))
-        Self.defaults.set(Self.secondsSinceMidnight(automaticDailyCheckTime), forKey: Self.autoSyncDailyTimeKey)
-        configureBackgroundScheduler()
-    }
 
     func renameFolder(for course: RemoteCourseSummary, to newFolder: String) {
         guard let rootURL, let rootID, let database, !recoveryBlocked, !isSyncActive else { return }
@@ -832,7 +830,6 @@ struct MenuBarSnapshot: Sendable {
     private static let enabledCoursesKey = "io.github.tvaccari.beepbar.enabled-courses.v1"
     private static let autoSyncKey = "io.github.tvaccari.beepbar.auto-sync.v1"
     private static let autoSyncIntervalKey = "io.github.tvaccari.beepbar.auto-sync-interval.v1"
-    private static let autoSyncDailyTimeKey = "io.github.tvaccari.beepbar.auto-sync-daily-time.v1"
     private static let lastSuccessfulReconciliationKey = "io.github.tvaccari.beepbar.last-successful-reconciliation.v1."
     private static let lastSuccessfulSummaryKey = "io.github.tvaccari.beepbar.last-successful-summary.v1."
     private static let credentialExpiredKey = "io.github.tvaccari.beepbar.credential-expired.v1"
@@ -868,29 +865,11 @@ struct MenuBarSnapshot: Sendable {
         return store
     }()
 
-    private static let automaticIntervals: Set<Int> = [1_800, 3_600, 7_200, 14_400, 86_400]
+    private static let automaticIntervals: Set<Int> = [1_800, 3_600, 7_200, 14_400, 28_800]
 
     private static func validatedAutomaticInterval(_ value: Int?) -> Int {
-        guard let value, automaticIntervals.contains(value) else { return 3_600 }
+        guard let value, automaticIntervals.contains(value) else { return 28_800 }
         return value
-    }
-
-    private static func dailyTime(_ seconds: Int?) -> Date {
-        let valid = min(max(seconds ?? 9 * 3_600, 0), 86_399)
-        return Calendar.current.startOfDay(for: Date()).addingTimeInterval(TimeInterval(valid))
-    }
-
-    private static func secondsSinceMidnight(_ date: Date) -> Int {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
-        return (components.hour ?? 0) * 3_600 + (components.minute ?? 0) * 60
-    }
-
-    private static func secondsUntilNextDailyCheck(_ time: Date, now: Date = Date()) -> TimeInterval {
-        let calendar = Calendar.current
-        let components = calendar.dateComponents([.hour, .minute], from: time)
-        let today = calendar.date(bySettingHour: components.hour ?? 0, minute: components.minute ?? 0, second: 0, of: now) ?? now
-        let next = today > now ? today : calendar.date(byAdding: .day, value: 1, to: today) ?? today
-        return max(next.timeIntervalSince(now), 60)
     }
 
     private static func storedRootURL() -> URL? {
@@ -1068,7 +1047,6 @@ struct MenuBarSnapshot: Sendable {
         let configuration = BackgroundScheduleConfiguration(
             enabled: automaticSyncEnabled,
             interval: automaticSyncInterval,
-            dailyTime: Self.secondsSinceMidnight(automaticDailyCheckTime),
             connected: accountState == .connected,
             rootConfigured: rootURL != nil,
             enabledCourseCount: enabledCourseIDs.count,
@@ -1085,34 +1063,43 @@ struct MenuBarSnapshot: Sendable {
             enabledCourseCount: configuration.enabledCourseCount,
             recoveryBlocked: recoveryBlocked
         )
-        guard BackgroundSchedulePolicy.shouldSchedule(policy) else { return }
+        guard BackgroundSchedulePolicy.shouldSchedule(policy) else {
+            BeepbarLog.scheduler.notice("Scheduler disabled enabled=\(configuration.enabled, privacy: .public) connected=\(configuration.connected, privacy: .public) root=\(configuration.rootConfigured, privacy: .public) courses=\(configuration.enabledCourseCount, privacy: .public) recoveryBlocked=\(configuration.recoveryBlocked, privacy: .public)")
+            return
+        }
         let scheduler = NSBackgroundActivityScheduler(identifier: "io.github.tvaccari.beepbar.auto-sync")
-        let isDaily = automaticSyncInterval == 86_400
-        scheduler.repeats = !isDaily
-        scheduler.interval = isDaily ? Self.secondsUntilNextDailyCheck(automaticDailyCheckTime) : TimeInterval(automaticSyncInterval)
-        scheduler.tolerance = isDaily ? 3_600 : TimeInterval(automaticSyncInterval) * 0.5
+        scheduler.repeats = true
+        scheduler.interval = TimeInterval(automaticSyncInterval)
+        scheduler.tolerance = TimeInterval(automaticSyncInterval) * 0.5
         scheduler.qualityOfService = .utility
+        BeepbarLog.scheduler.notice("Scheduler configured intervalSeconds=\(self.automaticSyncInterval, privacy: .public) toleranceSeconds=\(Int(scheduler.tolerance), privacy: .public)")
         scheduler.schedule { [weak self] completion in
             Task { @MainActor [weak self] in
+                BeepbarLog.scheduler.notice("Scheduler callback started")
                 let trace = PerformanceTrace.shared.begin("scheduler.callback", category: .scheduler)
                 defer { PerformanceTrace.shared.end("scheduler.callback", category: .scheduler, state: trace) }
                 let outcome = await self?.runAutomaticSync() ?? .finished
+                BeepbarLog.scheduler.notice("Scheduler callback completed outcome=\(outcome.diagnosticName, privacy: .public)")
                 completion(outcome.schedulerResult)
-                if self?.automaticSyncInterval == 86_400, !outcome.isDeferred {
-                    self?.backgroundScheduler?.invalidate()
-                    self?.backgroundScheduler = nil
-                    self?.scheduledConfiguration = nil
-                    self?.configureBackgroundScheduler()
-                }
             }
         }
         backgroundScheduler = scheduler
     }
 
     private func runAutomaticSync() async -> AutomaticSyncOutcome {
-        guard !ProcessInfo.processInfo.isLowPowerModeEnabled else { return .deferred }
-        guard activeOperationID == nil else { return .deferred }
-        guard let rootURL, let rootID, let database, accountState == .connected, !recoveryBlocked else { return .finished }
+        guard !ProcessInfo.processInfo.isLowPowerModeEnabled else {
+            BeepbarLog.sync.notice("Automatic synchronization deferred reason=low-power")
+            return .deferred
+        }
+        guard activeOperationID == nil else {
+            BeepbarLog.sync.notice("Automatic synchronization deferred reason=operation-active")
+            return .deferred
+        }
+        guard let rootURL, let rootID, let database, accountState == .connected, !recoveryBlocked else {
+            BeepbarLog.sync.notice("Automatic synchronization skipped reason=configuration-unavailable")
+            return .finished
+        }
+        BeepbarLog.sync.notice("Automatic synchronization started")
         let operationID = UUID()
         activeOperationID = operationID
         automaticOutcome = .finished
@@ -1172,12 +1159,14 @@ struct MenuBarSnapshot: Sendable {
         await finishReconciliation(progress: summary)
         if automatic { await notificationCoordinator.notifyAutomaticRun(installed: summary.installed, conflicts: conflicts, failures: summary.failures) }
         if summary.failures == 0 { notificationCoordinator.clearFailure() }
+        BeepbarLog.sync.notice("Synchronization completed automatic=\(automatic, privacy: .public) total=\(summary.total, privacy: .public) installed=\(summary.installed, privacy: .public) conflicts=\(summary.conflicts, privacy: .public) failures=\(summary.failures, privacy: .public)")
         configureBackgroundScheduler()
         endOperation(operationID)
     }
 
     private func cancelledSync(_ operationID: UUID) {
         guard activeOperationID == operationID else { return }
+        BeepbarLog.sync.notice("Synchronization cancelled")
         setSyncState(.readyUnchecked)
         endOperation(operationID)
     }
@@ -1191,6 +1180,7 @@ struct MenuBarSnapshot: Sendable {
 
     private func failedSync(_ operationID: UUID, error: WeBeepAPIError?, automatic: Bool) async {
         guard activeOperationID == operationID else { return }
+        BeepbarLog.sync.error("Synchronization failed automatic=\(automatic, privacy: .public) errorType=\(error.map { String(reflecting: type(of: $0)) } ?? "unknown", privacy: .public)")
         if let error {
             await handleServiceFailure(error, automatic: automatic)
         } else {
@@ -1256,7 +1246,6 @@ struct MenuBarSnapshot: Sendable {
 private struct BackgroundScheduleConfiguration: Equatable {
     let enabled: Bool
     let interval: Int
-    let dailyTime: Int
     let connected: Bool
     let rootConfigured: Bool
     let enabledCourseCount: Int
@@ -1431,6 +1420,14 @@ enum LoginWindowError: Error { case cancelled }
 
 private enum AutomaticSyncOutcome {
     case finished, deferred, cancelled
+
+    var diagnosticName: String {
+        switch self {
+        case .finished: "finished"
+        case .deferred: "deferred"
+        case .cancelled: "cancelled"
+        }
+    }
 
     var isDeferred: Bool {
         if case .deferred = self { true } else { false }

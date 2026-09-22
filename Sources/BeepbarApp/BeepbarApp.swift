@@ -3,6 +3,12 @@ import BeepbarCore
 import SwiftUI
 import os
 
+enum BeepbarLog {
+    static let lifecycle = Logger(subsystem: "io.github.tvaccari.beepbar", category: "lifecycle")
+    static let scheduler = Logger(subsystem: "io.github.tvaccari.beepbar", category: "scheduler")
+    static let sync = Logger(subsystem: "io.github.tvaccari.beepbar", category: "sync")
+}
+
 @main
 struct BeepbarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -28,6 +34,9 @@ struct BeepbarApp: App {
     private var terminationPending = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        BeepbarLog.lifecycle.notice("Application launched version=\(version, privacy: .public) build=\(build, privacy: .public)")
         _ = UpdaterController.shared
         statusItemController = StatusItemController(authentication: authentication)
         guard authentication.needsOnboarding else { return }
@@ -35,8 +44,12 @@ struct BeepbarApp: App {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let syncTask = authentication.prepareForTermination() else { return .terminateNow }
+        guard let syncTask = authentication.prepareForTermination() else {
+            BeepbarLog.lifecycle.notice("Termination accepted immediately")
+            return .terminateNow
+        }
         guard !terminationPending else { return .terminateLater }
+        BeepbarLog.lifecycle.notice("Termination waiting for active synchronization")
         terminationPending = true
         Task { [weak self] in
             await syncTask.value
@@ -52,6 +65,7 @@ struct BeepbarApp: App {
     private func finishTermination() {
         guard terminationPending else { return }
         terminationPending = false
+        BeepbarLog.lifecycle.notice("Termination accepted after synchronization shutdown")
         NSApp.reply(toApplicationShouldTerminate: true)
     }
 }
@@ -125,16 +139,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     @objc private func performAction() {
+        BeepbarLog.lifecycle.notice("Menu primary action selected")
         let authentication = authentication
         Task { @MainActor in authentication.performMenuBarAction() }
     }
 
     @objc private func openConfiguration() {
+        BeepbarLog.lifecycle.notice("Menu open selected")
         let authentication = authentication
         Task { @MainActor in ConfigurationWindowController.shared.show(authentication) }
     }
 
     @objc private func quit() {
+        BeepbarLog.lifecycle.notice("Menu quit selected")
         Task { @MainActor in NSApp.terminate(nil) }
     }
 }
@@ -145,6 +162,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var appearanceTrace: OSSignpostIntervalState?
 
     func show(_ authentication: WeBeepAuthenticationController) {
+        BeepbarLog.lifecycle.notice("Configuration window requested")
         if window?.isKeyWindow != true {
             if let appearanceTrace {
                 PerformanceTrace.shared.end("ui.configurationWindow", category: .ui, state: appearanceTrace)
