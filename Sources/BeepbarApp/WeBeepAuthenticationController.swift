@@ -258,6 +258,7 @@ struct MenuBarSnapshot: Sendable {
     private let credentialVault = CredentialVault(read: FileTokenStore.load, write: FileTokenStore.save)
     private let notificationCoordinator: SyncNotificationCoordinator
     private var backgroundScheduler: NSBackgroundActivityScheduler?
+    private var courseRefreshScheduler: NSBackgroundActivityScheduler?
     private var bootstrapTask: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
     private var scopeWriteTask: Task<Void, Never>?
@@ -703,6 +704,8 @@ struct MenuBarSnapshot: Sendable {
     func prepareForTermination() -> Task<Void, Never>? {
         backgroundScheduler?.invalidate()
         backgroundScheduler = nil
+        courseRefreshScheduler?.invalidate()
+        courseRefreshScheduler = nil
         scheduledConfiguration = nil
         guard let syncTask else { return nil }
         syncTask.cancel()
@@ -799,11 +802,12 @@ struct MenuBarSnapshot: Sendable {
         }
     }
 
-    func loadCourses() {
-        guard !Self.isUIPreview else { return }
-        guard !isLoadingCourses, !isSyncActive else { return }
+    @discardableResult
+    func loadCourses() -> Task<Void, Never>? {
+        guard !Self.isUIPreview else { return nil }
+        guard !isLoadingCourses, !isSyncActive else { return nil }
         isLoadingCourses = true; status = "Caricamento corsi in corso…"
-        Task { [weak self] in
+        return Task { [weak self] in
             defer { self?.isLoadingCourses = false }
             do {
                 guard let self else { return }
@@ -1057,6 +1061,7 @@ struct MenuBarSnapshot: Sendable {
     }
 
     private func configureBackgroundScheduler() {
+        configureCourseRefreshScheduler()
         let configuration = BackgroundScheduleConfiguration(
             enabled: automaticSyncEnabled,
             interval: automaticSyncInterval,
@@ -1097,6 +1102,27 @@ struct MenuBarSnapshot: Sendable {
             }
         }
         backgroundScheduler = scheduler
+    }
+
+    private func configureCourseRefreshScheduler() {
+        let shouldSchedule = accountState == .connected && hasStoredCredential && !recoveryBlocked
+        if shouldSchedule == (courseRefreshScheduler != nil) { return }
+        courseRefreshScheduler?.invalidate()
+        courseRefreshScheduler = nil
+        guard shouldSchedule else { return }
+        let scheduler = NSBackgroundActivityScheduler(identifier: "io.github.tvaccari.beepbar.course-refresh")
+        scheduler.repeats = true
+        scheduler.interval = 6 * 60 * 60
+        scheduler.tolerance = 60 * 60
+        scheduler.qualityOfService = .utility
+        scheduler.schedule { [weak self] completion in
+            Task { @MainActor [weak self] in
+                let refreshTask = self?.loadCourses()
+                await refreshTask?.value
+                completion(.finished)
+            }
+        }
+        courseRefreshScheduler = scheduler
     }
 
     private func runAutomaticSync() async -> AutomaticSyncOutcome {
