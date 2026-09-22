@@ -5,6 +5,8 @@
 [![Downloads](https://img.shields.io/github/downloads/tommaso-vaccari/Beepbar/total)](https://github.com/tommaso-vaccari/Beepbar/releases)
 [![Website](https://img.shields.io/badge/website-BeepBar-1677ff)](https://www.tommasovaccari.com/beepbar)
 
+**[Visit the BeepBar website](https://www.tommasovaccari.com/beepbar)** · **[Download the latest release](https://github.com/tommaso-vaccari/Beepbar/releases/latest)**
+
 Has another syncing app ever **overwritten your annotated slides**? Tired of **renaming files** just to stop them from being replaced? Looking for a syncing app that's **super lightweight** and feels **native** to your macOS environment?
 
 Beepbar solves exactly that. It never overwrites your local work: take notes directly on a slide PDF, or edit a file on iPad/Mac after downloading it, and that copy is preserved instead of being silently replaced when your university platform publishes an update. Built specifically for Apple Silicon, it stays native and ultra-lightweight in the background.
