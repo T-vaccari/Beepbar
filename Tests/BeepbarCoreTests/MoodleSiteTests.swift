@@ -23,4 +23,12 @@ import Testing
         #expect(Set(MoodleSite.unipd.map(\.id)).count == MoodleSite.unipd.count)
         #expect(Set(MoodleSite.unipd.compactMap(\.baseURL.host)).count == MoodleSite.unipd.count)
     }
+
+    @Test func recognizesUniversitySpecificAuthenticatedLandingPages() {
+        #expect(MoodleSite.polimi.isAuthenticatedLandingURL(URL(string: "https://webeep.polimi.it/my/")!))
+        #expect(!MoodleSite.polimi.isAuthenticatedLandingURL(URL(string: "https://webeep.polimi.it/")!))
+        #expect(MoodleSite.unipd[0].isAuthenticatedLandingURL(URL(string: "https://stem.elearning.unipd.it/")!))
+        #expect(MoodleSite.unipd[0].isAuthenticatedLandingURL(URL(string: "https://stem.elearning.unipd.it/my/")!))
+        #expect(!MoodleSite.unipd[0].isAuthenticatedLandingURL(URL(string: "https://evil.example/")!))
+    }
 }

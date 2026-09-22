@@ -30,6 +30,17 @@ public struct MoodleSite: Sendable, Equatable, Hashable, Identifiable {
         ]
         return components.url!
     }
+    public func isAuthenticatedLandingURL(_ url: URL) -> Bool {
+        guard url.scheme == "https",
+              url.host?.lowercased() == baseURL.host?.lowercased()
+        else { return false }
+        switch university {
+        case .polimi:
+            return url.path == "/my" || url.path == "/my/"
+        case .unipd:
+            return url.path == "/" || url.path == "/my" || url.path == "/my/"
+        }
+    }
     public var serverPolicy: WeBeepServerPolicy {
         WeBeepServerPolicy(
             endpoint: baseURL.appending(path: "webservice/rest/server.php"),

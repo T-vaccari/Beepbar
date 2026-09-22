@@ -1570,7 +1570,7 @@ private enum AutomaticSyncOutcome {
             decisionHandler(.cancel); guard phase == .launchingMobile else { return }; webView.stopLoading(); finish(.success(url)); return
         }
         guard url.scheme == "https" else { decisionHandler(.cancel); return }
-        if phase == .signingIn, url.host?.lowercased() == site.baseURL.host?.lowercased(), url.path == "/my" || url.path == "/my/" {
+        if phase == .signingIn, site.isAuthenticatedLandingURL(url) {
             phase = .launchingMobile; decisionHandler(.cancel)
             webView.load(URLRequest(url: site.mobileLaunchURL)); return
         }
