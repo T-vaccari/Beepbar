@@ -31,7 +31,7 @@ struct OnboardingView: View {
                 .font(.system(size: 46))
                 .foregroundStyle(.tint)
             Text("Benvenuto in Beepbar").font(.title.weight(.semibold))
-            Text("Sincronizza i materiali Moodle sul tuo Mac, senza sorprese.")
+            Text("Sincronizza in sicurezza i materiali universitari sul tuo Mac.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             VStack(alignment: .leading, spacing: 10) {

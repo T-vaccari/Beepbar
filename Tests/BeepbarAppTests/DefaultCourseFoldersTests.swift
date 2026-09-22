@@ -14,7 +14,7 @@ struct DefaultCourseFoldersTests {
             course(2, "056902 - ANALISI MATEMATICA 1 (2025-26)"),
             course(3, "Tesi di laurea"),
         ])
-        #expect(folders == [1: "FONDAMENTI DI CALCOLO", 2: "ANALISI MATEMATICA 1", 3: "Tesi di laurea"])
+        #expect(folders == [1: "fondamenti-di-calcolo", 2: "analisi-matematica-1", 3: "tesi-di-laurea"])
     }
 
     @Test func fallsBackToTheFullNameOnlyForCoursesWhoseDefaultsCollide() {
@@ -25,9 +25,9 @@ struct DefaultCourseFoldersTests {
             course(2, "054221 - Fondamenti di Calcolo (2025-26)"),
             course(3, "056902 - ANALISI MATEMATICA 1 (2025-26)"),
         ])
-        #expect(folders[1] == "054221 - FONDAMENTI DI CALCOLO (2024-25)")
-        #expect(folders[2] == "054221 - Fondamenti di Calcolo (2025-26)")
-        #expect(folders[3] == "ANALISI MATEMATICA 1")
+        #expect(folders[1] == "054221-fondamenti-di-calcolo-2024-25")
+        #expect(folders[2] == "054221-fondamenti-di-calcolo-2025-26")
+        #expect(folders[3] == "analisi-matematica-1")
     }
 
     @Test func emptyCourseListYieldsEmptyMap() {

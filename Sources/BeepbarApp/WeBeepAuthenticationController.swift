@@ -960,7 +960,8 @@ struct MenuBarSnapshot: Sendable {
                     storedFolder: scope.localFolder,
                     storedCourseName: scope.displayName,
                     currentCourseName: course.displayName,
-                    courseID: course.id
+                    courseID: course.id,
+                    currentDefaultFolder: defaults[course.id]
                 )
                 if let replacement, let rootURL {
                     do {
@@ -1035,7 +1036,7 @@ struct MenuBarSnapshot: Sendable {
         return Dictionary(courses.map { course -> (Int64, String) in
             let base = LocalPathPolicy.defaultCourseFolder(course.displayName)
             let duplicate = (names[base.precomposedStringWithCanonicalMapping.lowercased()]?.count ?? 0) > 1
-            return (course.id, duplicate ? LocalPathPolicy.component(course.displayName) : base)
+            return (course.id, duplicate ? LocalPathPolicy.courseFolderSlug(course.displayName) : base)
         }, uniquingKeysWith: { first, _ in first })
     }
 

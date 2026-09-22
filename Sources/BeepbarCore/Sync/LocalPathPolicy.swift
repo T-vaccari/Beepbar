@@ -9,8 +9,43 @@ public enum LocalPathPolicy {
     // Compiled once: `defaultCourseFolder` runs for every course each time the folder map is
     // rebuilt, and an `NSRegularExpression` is immutable, so one shared instance is safe.
     private static let forkStyleCourseName = try? NSRegularExpression(pattern: "\\d+ - (.+) \\(.+\\)")
+    private static let unipdCourseSuffix = try? NSRegularExpression(
+        pattern: "\\s+\\d{4}-\\d{4}\\s+-\\s+INQ\\d+\\s*$",
+        options: [.caseInsensitive]
+    )
 
     public static func defaultCourseFolder(_ courseName: String) -> String {
+        courseSlug(courseLabel(courseName))
+    }
+
+    public static func courseFolderSlug(_ courseName: String) -> String {
+        courseSlug(courseName)
+    }
+
+    private static func courseLabel(_ courseName: String) -> String {
+        let range = NSRange(courseName.startIndex..., in: courseName)
+        if let match = forkStyleCourseName?.firstMatch(in: courseName, range: range), let captured = Range(match.range(at: 1), in: courseName) {
+            return String(courseName[captured])
+        }
+        return unipdCourseSuffix?.stringByReplacingMatches(in: courseName, range: range, withTemplate: "") ?? courseName
+    }
+
+    private static func courseSlug(_ courseName: String) -> String {
+        var slug = ""
+        var needsSeparator = false
+        for scalar in courseName.precomposedStringWithCanonicalMapping.lowercased().unicodeScalars {
+            if CharacterSet.alphanumerics.contains(scalar) {
+                if needsSeparator, !slug.isEmpty { slug.append("-") }
+                slug.unicodeScalars.append(scalar)
+                needsSeparator = false
+            } else if !slug.isEmpty {
+                needsSeparator = true
+            }
+        }
+        return limited(slug.isEmpty ? "_" : slug)
+    }
+
+    private static func legacyCourseFolder(_ courseName: String) -> String {
         let range = NSRange(courseName.startIndex..., in: courseName)
         if let match = forkStyleCourseName?.firstMatch(in: courseName, range: range), let captured = Range(match.range(at: 1), in: courseName) {
             return component(String(courseName[captured]))
@@ -22,15 +57,17 @@ public enum LocalPathPolicy {
         storedFolder: String,
         storedCourseName: String,
         currentCourseName: String,
-        courseID: Int64
+        courseID: Int64,
+        currentDefaultFolder: String? = nil
     ) -> String? {
-        let currentDefault = defaultCourseFolder(currentCourseName)
+        let currentDefault = currentDefaultFolder ?? defaultCourseFolder(currentCourseName)
         guard !equivalent(storedFolder, currentDefault) else { return nil }
-        let storedDefault = defaultCourseFolder(storedCourseName)
-        let legacyDefaults = [storedDefault, "\(storedDefault) (\(courseID))"]
+        let storedDefault = legacyCourseFolder(storedCourseName)
+        let currentLegacyDefault = legacyCourseFolder(currentCourseName)
+        let legacyDefaults = [storedDefault, "\(storedDefault) (\(courseID))", currentLegacyDefault, "\(currentLegacyDefault) (\(courseID))"]
         let decodedStoredFolder = MoodleText.normalized(storedFolder).map(component)
         guard legacyDefaults.contains(where: { equivalent(storedFolder, $0) })
-                || decodedStoredFolder.map({ equivalent($0, currentDefault) }) == true else { return nil }
+                || decodedStoredFolder.map({ decoded in legacyDefaults.contains(where: { equivalent(decoded, $0) }) }) == true else { return nil }
         return currentDefault
     }
 
