@@ -66,7 +66,7 @@ struct BeepbarShellView: View {
 
     private var pageSubtitle: String {
         switch page {
-        case .home: "Materiali Moodle in locale"
+        case .home: "Materiali \(authentication.selectedSite.platformName) in locale"
         case .settings: "Impostazioni"
         case .conflicts: "Risolutore conflitti"
         case .syncDetail: "Ultima sincronizzazione"
@@ -119,7 +119,7 @@ private struct HomePage: View {
                     .controlSize(.large)
                     .disabled(authentication.isSyncActive ? false : !authentication.canSynchronize)
                 } else {
-                    Button("Accedi a Moodle") { open(.settings) }
+                    Button("Accedi a \(authentication.selectedSite.platformName)") { open(.settings) }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                 }
@@ -151,15 +151,10 @@ private struct HomePage: View {
     private var coursesCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Scegli i corsi da sincronizzare.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Aggiorna corsi") { authentication.loadCourses() }
-                        .disabled(!authentication.hasStoredCredential || authentication.isLoadingCourses || authentication.isSyncActive)
-                }
+                Text("Scegli i corsi da sincronizzare.")
+                    .font(.caption).foregroundStyle(.secondary)
                 if authentication.courses.isEmpty {
-                    ContentUnavailableView("Nessun corso caricato", systemImage: "books.vertical", description: Text("Collega Moodle e aggiorna l’elenco dei corsi."))
+                    ContentUnavailableView(authentication.isLoadingCourses ? "Caricamento corsi…" : "Nessun corso caricato", systemImage: "books.vertical", description: Text(authentication.hasStoredCredential ? "Nessun corso disponibile su \(authentication.selectedSite.platformName)." : "Collega \(authentication.selectedSite.platformName) per caricare l’elenco dei corsi."))
                         .frame(height: 130)
                 } else {
                     List {
@@ -268,7 +263,7 @@ private struct SettingsPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack { Button("Indietro", systemImage: "chevron.left", action: back); Spacer() }
-                GroupBox("Account Moodle") {
+                GroupBox("Account \(authentication.selectedSite.platformName)") {
                     VStack(spacing: 12) {
                         if !authentication.hasStoredCredential {
                             MoodleSitePicker(authentication: authentication)
