@@ -263,7 +263,7 @@ public final class WeBeepAPIClient: @unchecked Sendable {
                           // revision fallback below, so it is treated as a malformed entry instead.
                           let modifiedSeconds = Int64(exactly: timemodified.rounded(.towardZero)),
                           let urlText = content.fileurl, let url = URL(string: urlText), let canonicalPath = canonicalPluginPath(url, policy: policy) else { issueCount += 1; return nil }
-                    let identity = "\(courseID):\(module.id):\(canonicalPath)"
+                    let identity = "\(courseID):\(module.id):\(remoteFilePath):\(filename)"
                     identityCounts[identity, default: 0] += 1
                     let hasCredentialQuery = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains { $0.name.caseInsensitiveCompare("token") == .orderedSame || $0.name.caseInsensitiveCompare("wstoken") == .orderedSame } == true
                     let reason: String?

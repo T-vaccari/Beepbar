@@ -79,6 +79,33 @@ public actor SyncDatabase {
         }
     }
 
+    public func migrateLegacyBaseline(rootID: UUID, legacyRemoteID: String, remoteID: String) throws -> Baseline? {
+        try execute("BEGIN IMMEDIATE")
+        do {
+            guard try baseline(rootID: rootID, remoteID: remoteID) == nil,
+                  let legacy = try baseline(rootID: rootID, remoteID: legacyRemoteID),
+                  !(try hasOpenConflictForMigration(rootID: rootID, remoteID: legacyRemoteID)),
+                  !(try hasOpenConflictForMigration(rootID: rootID, remoteID: remoteID)),
+                  !(try hasPendingOperationForMigration(rootID: rootID, remoteID: legacyRemoteID)),
+                  !(try hasPendingOperationForMigration(rootID: rootID, remoteID: remoteID)) else {
+                try execute("COMMIT")
+                return nil
+            }
+            try withStatement("UPDATE items SET remote_id = ?, last_seen_at = ? WHERE root_id = ? AND remote_id = ?") { statement in
+                try bind(remoteID, to: statement, index: 1)
+                sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
+                try bind(rootID.uuidString, to: statement, index: 3)
+                try bind(legacyRemoteID, to: statement, index: 4)
+                try stepDone(statement)
+            }
+            try execute("COMMIT")
+            return Baseline(remoteID: remoteID, relativePath: legacy.relativePath, sha256: legacy.sha256, remoteRevision: legacy.remoteRevision)
+        } catch {
+            try? execute("ROLLBACK")
+            throw error
+        }
+    }
+
     public func baselines(rootID: UUID) throws -> [String: Baseline] {
         try withStatement("SELECT remote_id, relative_path, base_sha256, remote_revision FROM items WHERE root_id = ?") { statement in
             try bind(rootID.uuidString, to: statement, index: 1)
@@ -383,6 +410,20 @@ public actor SyncDatabase {
     private func hasPath(_ table: String, column: String, rootID: UUID, prefix: String, extra: String) throws -> Bool {
         try withStatement("SELECT 1 FROM \(table) WHERE root_id = ? AND (\(column) = ? OR substr(\(column), 1, length(?) + 1) = ? || '/') \(extra) LIMIT 1") { statement in
             try bind(rootID.uuidString, to: statement, index: 1); try bind(prefix, to: statement, index: 2); try bind(prefix, to: statement, index: 3); try bind(prefix, to: statement, index: 4)
+            return try stepRow(statement)
+        }
+    }
+
+    private func hasOpenConflictForMigration(rootID: UUID, remoteID: String) throws -> Bool {
+        try withStatement("SELECT 1 FROM conflicts WHERE root_id = ? AND remote_id = ? AND status = 'open' LIMIT 1") { statement in
+            try bind(rootID.uuidString, to: statement, index: 1); try bind(remoteID, to: statement, index: 2)
+            return try stepRow(statement)
+        }
+    }
+
+    private func hasPendingOperationForMigration(rootID: UUID, remoteID: String) throws -> Bool {
+        try withStatement("SELECT 1 FROM pending_operations WHERE root_id = ? AND remote_id = ? LIMIT 1") { statement in
+            try bind(rootID.uuidString, to: statement, index: 1); try bind(remoteID, to: statement, index: 2)
             return try stepRow(statement)
         }
     }

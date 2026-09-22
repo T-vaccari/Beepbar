@@ -120,6 +120,24 @@ import Testing
         #expect(contents.sections[0].modules[0].files[0].isSupported)
     }
 
+    @Test func keepsFileIdentityWhenMoodleReissuesItsPluginURL() async throws {
+        func file(from url: String) async throws -> RemoteFileCandidate {
+            let session = testSession { _ in
+                response(status: 200, body: """
+                [{"id":1,"modules":[{"id":4,"name":"Slides","contents":[{"type":"file","filename":"intro.pdf","filepath":"/notes/","filesize":42,"timemodified":1,"fileurl":"\(url)"}]}]}]
+                """)
+            }
+            return try #require(try await WeBeepAPIClient(session: session).fetchContents(courseID: 9, token: "token").sections.first?.modules.first?.files.first)
+        }
+
+        let first = try await file(from: "https://webeep.polimi.it/webservice/pluginfile.php/9/mod_folder/content/2/notes/intro.pdf")
+        let reissued = try await file(from: "https://webeep.polimi.it/webservice/pluginfile.php/9/mod_folder/content/3/notes/intro.pdf")
+
+        #expect(first.id == "9:4:/notes/:intro.pdf")
+        #expect(first.id == reissued.id)
+        #expect(first.canonicalPluginPath != reissued.canonicalPluginPath)
+    }
+
     @Test func keepsValidEntriesBesideMalformedModulesAndContents() async throws {
         let session = testSession { _ in
             response(status: 200, body: #"[{"id":1,"modules":[{"id":"bad"},{"id":4,"name":"Slides","contents":[{"type":"file","filename":7},{"type":"file","filename":"intro.pdf","filepath":"/","filesize":42,"timemodified":1,"fileurl":"https://webeep.polimi.it/webservice/pluginfile.php/1/a.pdf"}]}]}]"#)
