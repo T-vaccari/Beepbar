@@ -85,7 +85,7 @@ struct OnboardingView: View {
             accountBox
             VStack(alignment: .leading, spacing: 10) {
                 onboardingPoint(systemImage: "arrow.triangle.2.circlepath", text: "Frequenza del controllo automatico e aggiornamenti dell'app: sempre modificabili da Impostazioni.")
-                onboardingPoint(systemImage: "exclamationmark.triangle", text: "Se un file cambia sia sul tuo Mac sia su Moodle, lo trovi nella sezione Conflitti: decidi tu quale versione tenere.")
+                onboardingPoint(systemImage: "exclamationmark.triangle", text: "Se un file cambia sia sul tuo Mac sia su \(authentication.selectedSite.platformName), lo trovi nella sezione Conflitti: decidi tu quale versione tenere.")
             }
         }
     }

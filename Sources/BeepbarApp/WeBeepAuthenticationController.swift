@@ -19,8 +19,8 @@ enum AppFailure: Equatable {
         switch self {
         case .authenticationExpired: "Accesso scaduto"
         case .connectivity: "Connessione assente"
-        case .serviceUnavailable: "Moodle non disponibile"
-        case .incompatibleResponse: "Problema con Moodle"
+        case .serviceUnavailable: "Piattaforma non disponibile"
+        case .incompatibleResponse: "Problema con la piattaforma"
         case .credentialUnavailable: "Credenziale non disponibile"
         case .partialSync: "Sincronizzazione incompleta"
         case .local: "Richiede attenzione"
@@ -31,8 +31,8 @@ enum AppFailure: Equatable {
         switch self {
         case .authenticationExpired: "Accedi di nuovo per riprendere la sincronizzazione."
         case .connectivity: "Controlla la connessione. Beepbar riproverà automaticamente."
-        case .serviceUnavailable: "Moodle non risponde. I materiali locali restano disponibili."
-        case .incompatibleResponse: "Moodle ha restituito una risposta inattesa. Riprova più tardi."
+        case .serviceUnavailable: "La piattaforma non risponde. I materiali locali restano disponibili."
+        case .incompatibleResponse: "La piattaforma ha restituito una risposta inattesa. Riprova più tardi."
         case .credentialUnavailable: "Beepbar non riesce a salvare o leggere la credenziale locale. Riprova più tardi."
         case .partialSync: "Alcuni materiali non sono stati aggiornati. I file esistenti sono al sicuro."
         case .local(let message): message
@@ -57,7 +57,7 @@ enum AppSyncState: Equatable {
     var title: String {
         switch self {
         case .starting: "Avvio"
-        case .loginRequired: "Accedi a Moodle"
+        case .loginRequired: "Accedi"
         case .needsFolder: "Apri Impostazioni"
         case .readyUnchecked: "Pronto"
         case .checking: "Controllo aggiornamenti"
@@ -211,6 +211,7 @@ struct MenuBarSnapshot: Sendable {
     @Published private(set) var isAuthenticating = false
     @Published private(set) var isVerifying = false
     @Published private(set) var isLoadingCourses = false
+    @Published private(set) var courseLoadError: String?
     @Published private(set) var courses: [RemoteCourseSummary] = [] {
         didSet { defaultCourseFolders = Self.defaultFolders(for: courses) }
     }
@@ -505,7 +506,7 @@ struct MenuBarSnapshot: Sendable {
     }
 
     var canSynchronize: Bool {
-        accountState == .connected && hasStoredCredential && rootURL != nil && !enabledCourseIDs.isEmpty && !isSyncActive && !recoveryBlocked
+        accountState == .connected && hasStoredCredential && rootURL != nil && !enabledCourseIDs.isEmpty && !isSyncActive && !isLoadingCourses && !recoveryBlocked
     }
 
     func performMenuBarAction() {
@@ -521,8 +522,11 @@ struct MenuBarSnapshot: Sendable {
     }
 
     func refreshOnWindowOpen() {
-        guard hasStoredCredential else { return }
-        if courses.isEmpty { loadCourses() }
+        Task { [weak self] in
+            guard let self else { return }
+            await self.bootstrapTask?.value
+            self.loadCourses()
+        }
         refreshConflicts()
     }
 
@@ -647,7 +651,7 @@ struct MenuBarSnapshot: Sendable {
         }
 #endif
         guard !recoveryBlocked else { setSyncState(.recoveryBlocked); return }
-        guard activeOperationID == nil else { return }
+        guard activeOperationID == nil, !isLoadingCourses else { return }
         let operationID = UUID()
         activeOperationID = operationID
         setSyncState(.checking)
@@ -776,7 +780,7 @@ struct MenuBarSnapshot: Sendable {
     func validateConnection() {
         guard !Self.isUIPreview else { return }
         guard !isVerifying else { return }
-        isVerifying = true; status = "Verifica connessione Moodle in corso…"
+        isVerifying = true; status = "Verifica connessione \(selectedSite.platformName) in corso…"
         Task { [weak self] in
             defer { self?.isVerifying = false }
             do {
@@ -794,15 +798,16 @@ struct MenuBarSnapshot: Sendable {
             } catch let error as CredentialStorageError {
                 await self?.handleCredentialStorageError(error)
             } catch {
-                self?.setSyncState(.failed(.local("Non è stato possibile verificare Moodle. Riprova più tardi.")))
+                self?.setSyncState(.failed(.local("Non è stato possibile verificare la piattaforma. Riprova più tardi.")))
             }
         }
     }
 
     func loadCourses() {
         guard !Self.isUIPreview else { return }
-        guard !isLoadingCourses, !isSyncActive else { return }
-        isLoadingCourses = true; status = "Caricamento corsi in corso…"
+        guard accountState == .connected, hasStoredCredential, !isLoadingCourses, !isSyncActive else { return }
+        courseLoadError = nil
+        isLoadingCourses = true
         Task { [weak self] in
             defer { self?.isLoadingCourses = false }
             do {
@@ -822,14 +827,19 @@ struct MenuBarSnapshot: Sendable {
                 self.courses = Self.orderedForDisplay(courses, enabledCourseIDs: self.enabledCourseIDs)
                 self.accountState = .connected
                 Self.defaults.removeObject(forKey: Self.credentialExpiredKey)
-                self.notificationCoordinator.clearFailure()
-                await self.restorePersistedSyncState()
             } catch let error as WeBeepAPIError {
-                await self?.handleServiceFailure(error, automatic: false)
+                guard let self else { return }
+                if error == .invalidToken {
+                    await self.expireCredential()
+                } else if error == .network(.timedOut) {
+                    self.courseLoadError = "\(self.selectedSite.platformName) non risponde. Riprova."
+                } else {
+                    self.courseLoadError = "Impossibile aggiornare i corsi da \(self.selectedSite.platformName). Riprova."
+                }
             } catch let error as CredentialStorageError {
                 await self?.handleCredentialStorageError(error)
             } catch {
-                self?.setSyncState(.failed(.local("Non è stato possibile aggiornare i corsi. Riprova più tardi.")))
+                self?.courseLoadError = "Impossibile aggiornare i corsi. Riprova."
             }
         }
     }
@@ -894,7 +904,7 @@ struct MenuBarSnapshot: Sendable {
         loginWindow = nil; isAuthenticating = false
         siteInfo = nil; courses = []
         guard case let .success(callback) = result, let token = token(from: callback) else {
-            status = "Accesso Moodle annullato o callback non valido."; return
+            status = "Accesso a \(selectedSite.platformName) annullato o callback non valido."; return
         }
         Task { [weak self] in
             do {
@@ -908,10 +918,11 @@ struct MenuBarSnapshot: Sendable {
                 self.notificationCoordinator.clearFailure()
                 self.setSyncState(self.rootURL == nil ? .needsFolder : .readyUnchecked)
                 self.configureBackgroundScheduler()
+                self.loadCourses()
             } catch let error as WeBeepAPIError where error == .invalidToken {
-                self?.status = "Il token ricevuto non è valido. Accedi di nuovo a Moodle."
+                self?.status = "Il token ricevuto non è valido. Accedi di nuovo alla piattaforma."
             } catch {
-                self?.status = "Impossibile verificare l'accesso Moodle. Il token non è stato salvato."
+                self?.status = "Impossibile verificare l'accesso alla piattaforma. Il token non è stato salvato."
             }
         }
     }
@@ -1103,7 +1114,7 @@ struct MenuBarSnapshot: Sendable {
             BeepbarLog.sync.notice("Automatic synchronization deferred reason=low-power")
             return .deferred
         }
-        guard activeOperationID == nil else {
+        guard activeOperationID == nil, !isLoadingCourses else {
             BeepbarLog.sync.notice("Automatic synchronization deferred reason=operation-active")
             return .deferred
         }
@@ -1344,9 +1355,9 @@ private enum AutomaticNotificationIssue: String {
 
     var title: String {
         switch self {
-        case .authenticationExpired: "Accesso Moodle scaduto"
-        case .serviceUnavailable: "Moodle non disponibile"
-        case .incompatibleResponse: "Problema con Moodle"
+        case .authenticationExpired: "Accesso scaduto"
+        case .serviceUnavailable: "Piattaforma non disponibile"
+        case .incompatibleResponse: "Problema con la piattaforma"
         case .partialSync: "Sincronizzazione incompleta"
         }
     }
@@ -1354,8 +1365,8 @@ private enum AutomaticNotificationIssue: String {
     var body: String {
         switch self {
         case .authenticationExpired: "Apri Beepbar e accedi di nuovo per riprendere la sincronizzazione."
-        case .serviceUnavailable: "Moodle non risponde. I materiali locali restano disponibili."
-        case .incompatibleResponse: "Moodle ha restituito una risposta inattesa. Apri Beepbar per i dettagli."
+        case .serviceUnavailable: "La piattaforma non risponde. I materiali locali restano disponibili."
+        case .incompatibleResponse: "La piattaforma ha restituito una risposta inattesa. Apri Beepbar per i dettagli."
         case .partialSync: "Alcuni materiali non sono stati aggiornati. Apri Beepbar per i dettagli."
         }
     }

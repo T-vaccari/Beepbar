@@ -21,6 +21,7 @@ public struct MoodleSite: Sendable, Equatable, Hashable, Identifiable {
     public let baseURL: URL
 
     public var displayName: String { areaName ?? university.displayName }
+    public var platformName: String { university == .polimi ? "WeBeep" : "Moodle" }
     public var loginURL: URL { baseURL.appending(path: "auth/shibboleth/index.php") }
     public var mobileLaunchURL: URL {
         var components = URLComponents(url: baseURL.appending(path: "admin/tool/mobile/launch.php"), resolvingAgainstBaseURL: false)!
