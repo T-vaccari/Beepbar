@@ -807,7 +807,7 @@ struct MenuBarSnapshot: Sendable {
         guard !Self.isUIPreview else { return }
         guard accountState == .connected, hasStoredCredential, !isLoadingCourses, !isSyncActive else { return }
         courseLoadError = nil
-        isLoadingCourses = true; status = "Caricamento corsi in corso…"
+        isLoadingCourses = true
         Task { [weak self] in
             defer { self?.isLoadingCourses = false }
             do {
@@ -827,8 +827,6 @@ struct MenuBarSnapshot: Sendable {
                 self.courses = Self.orderedForDisplay(courses, enabledCourseIDs: self.enabledCourseIDs)
                 self.accountState = .connected
                 Self.defaults.removeObject(forKey: Self.credentialExpiredKey)
-                self.notificationCoordinator.clearFailure()
-                await self.restorePersistedSyncState()
             } catch let error as WeBeepAPIError {
                 guard let self else { return }
                 if error == .invalidToken {
