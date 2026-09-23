@@ -151,10 +151,18 @@ private struct HomePage: View {
     private var coursesCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Scegli i corsi da sincronizzare.")
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text("Scegli i corsi da sincronizzare.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Aggiorna corsi") { authentication.loadCourses() }
+                        .disabled(authentication.accountState != .connected || authentication.isLoadingCourses || authentication.isSyncActive)
+                }
+                if let error = authentication.courseLoadError {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
                 if authentication.courses.isEmpty {
-                    ContentUnavailableView(authentication.isLoadingCourses ? "Caricamento corsi…" : "Nessun corso caricato", systemImage: "books.vertical", description: Text(authentication.hasStoredCredential ? "Nessun corso disponibile su \(authentication.selectedSite.platformName)." : "Collega \(authentication.selectedSite.platformName) per caricare l’elenco dei corsi."))
+                    ContentUnavailableView(authentication.isLoadingCourses ? "Caricamento corsi…" : "Nessun corso caricato", systemImage: "books.vertical", description: Text(authentication.courseLoadError != nil ? "Riprova con Aggiorna corsi." : authentication.hasStoredCredential ? "Nessun corso disponibile su \(authentication.selectedSite.platformName)." : "Collega \(authentication.selectedSite.platformName) per caricare l’elenco dei corsi."))
                         .frame(height: 130)
                 } else {
                     List {

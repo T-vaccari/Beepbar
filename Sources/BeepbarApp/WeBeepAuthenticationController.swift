@@ -211,6 +211,7 @@ struct MenuBarSnapshot: Sendable {
     @Published private(set) var isAuthenticating = false
     @Published private(set) var isVerifying = false
     @Published private(set) var isLoadingCourses = false
+    @Published private(set) var courseLoadError: String?
     @Published private(set) var courses: [RemoteCourseSummary] = [] {
         didSet { defaultCourseFolders = Self.defaultFolders(for: courses) }
     }
@@ -258,7 +259,6 @@ struct MenuBarSnapshot: Sendable {
     private let credentialVault = CredentialVault(read: FileTokenStore.load, write: FileTokenStore.save)
     private let notificationCoordinator: SyncNotificationCoordinator
     private var backgroundScheduler: NSBackgroundActivityScheduler?
-    private var courseRefreshScheduler: NSBackgroundActivityScheduler?
     private var bootstrapTask: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
     private var scopeWriteTask: Task<Void, Never>?
@@ -506,7 +506,7 @@ struct MenuBarSnapshot: Sendable {
     }
 
     var canSynchronize: Bool {
-        accountState == .connected && hasStoredCredential && rootURL != nil && !enabledCourseIDs.isEmpty && !isSyncActive && !recoveryBlocked
+        accountState == .connected && hasStoredCredential && rootURL != nil && !enabledCourseIDs.isEmpty && !isSyncActive && !isLoadingCourses && !recoveryBlocked
     }
 
     func performMenuBarAction() {
@@ -522,8 +522,11 @@ struct MenuBarSnapshot: Sendable {
     }
 
     func refreshOnWindowOpen() {
-        guard hasStoredCredential else { return }
-        loadCourses()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.bootstrapTask?.value
+            self.loadCourses()
+        }
         refreshConflicts()
     }
 
@@ -648,7 +651,7 @@ struct MenuBarSnapshot: Sendable {
         }
 #endif
         guard !recoveryBlocked else { setSyncState(.recoveryBlocked); return }
-        guard activeOperationID == nil else { return }
+        guard activeOperationID == nil, !isLoadingCourses else { return }
         let operationID = UUID()
         activeOperationID = operationID
         setSyncState(.checking)
@@ -704,8 +707,6 @@ struct MenuBarSnapshot: Sendable {
     func prepareForTermination() -> Task<Void, Never>? {
         backgroundScheduler?.invalidate()
         backgroundScheduler = nil
-        courseRefreshScheduler?.invalidate()
-        courseRefreshScheduler = nil
         scheduledConfiguration = nil
         guard let syncTask else { return nil }
         syncTask.cancel()
@@ -802,12 +803,12 @@ struct MenuBarSnapshot: Sendable {
         }
     }
 
-    @discardableResult
-    func loadCourses() -> Task<Void, Never>? {
-        guard !Self.isUIPreview else { return nil }
-        guard !isLoadingCourses, !isSyncActive else { return nil }
+    func loadCourses() {
+        guard !Self.isUIPreview else { return }
+        guard accountState == .connected, hasStoredCredential, !isLoadingCourses, !isSyncActive else { return }
+        courseLoadError = nil
         isLoadingCourses = true; status = "Caricamento corsi in corso…"
-        return Task { [weak self] in
+        Task { [weak self] in
             defer { self?.isLoadingCourses = false }
             do {
                 guard let self else { return }
@@ -829,11 +830,18 @@ struct MenuBarSnapshot: Sendable {
                 self.notificationCoordinator.clearFailure()
                 await self.restorePersistedSyncState()
             } catch let error as WeBeepAPIError {
-                await self?.handleServiceFailure(error, automatic: false)
+                guard let self else { return }
+                if error == .invalidToken {
+                    await self.expireCredential()
+                } else if error == .network(.timedOut) {
+                    self.courseLoadError = "\(self.selectedSite.platformName) non risponde. Riprova."
+                } else {
+                    self.courseLoadError = "Impossibile aggiornare i corsi da \(self.selectedSite.platformName). Riprova."
+                }
             } catch let error as CredentialStorageError {
                 await self?.handleCredentialStorageError(error)
             } catch {
-                self?.setSyncState(.failed(.local("Non è stato possibile aggiornare i corsi. Riprova più tardi.")))
+                self?.courseLoadError = "Impossibile aggiornare i corsi. Riprova."
             }
         }
     }
@@ -1061,7 +1069,6 @@ struct MenuBarSnapshot: Sendable {
     }
 
     private func configureBackgroundScheduler() {
-        configureCourseRefreshScheduler()
         let configuration = BackgroundScheduleConfiguration(
             enabled: automaticSyncEnabled,
             interval: automaticSyncInterval,
@@ -1104,33 +1111,12 @@ struct MenuBarSnapshot: Sendable {
         backgroundScheduler = scheduler
     }
 
-    private func configureCourseRefreshScheduler() {
-        let shouldSchedule = accountState == .connected && hasStoredCredential && !recoveryBlocked
-        if shouldSchedule == (courseRefreshScheduler != nil) { return }
-        courseRefreshScheduler?.invalidate()
-        courseRefreshScheduler = nil
-        guard shouldSchedule else { return }
-        let scheduler = NSBackgroundActivityScheduler(identifier: "io.github.tvaccari.beepbar.course-refresh")
-        scheduler.repeats = true
-        scheduler.interval = 6 * 60 * 60
-        scheduler.tolerance = 60 * 60
-        scheduler.qualityOfService = .utility
-        scheduler.schedule { [weak self] completion in
-            Task { @MainActor [weak self] in
-                let refreshTask = self?.loadCourses()
-                await refreshTask?.value
-                completion(.finished)
-            }
-        }
-        courseRefreshScheduler = scheduler
-    }
-
     private func runAutomaticSync() async -> AutomaticSyncOutcome {
         guard !ProcessInfo.processInfo.isLowPowerModeEnabled else {
             BeepbarLog.sync.notice("Automatic synchronization deferred reason=low-power")
             return .deferred
         }
-        guard activeOperationID == nil else {
+        guard activeOperationID == nil, !isLoadingCourses else {
             BeepbarLog.sync.notice("Automatic synchronization deferred reason=operation-active")
             return .deferred
         }
