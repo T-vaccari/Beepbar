@@ -110,6 +110,37 @@ struct FileStoreTests {
         #expect(!FileManager.default.fileExists(atPath: root.appending(path: ".BEEPBAR").path))
     }
 
+    @Test func migrationPathEntryMatchingBlocksCaseAndUnicodeAliases() {
+        #expect(FileStore.migrationDirectoryEntryMatch("Lectures", entries: ["LECTURES"]) == .differentSpelling)
+        #expect(FileStore.migrationDirectoryEntryMatch("é", entries: ["e\u{301}"]) == .differentSpelling)
+        #expect(FileStore.migrationDirectoryEntryMatch("Lectures", entries: ["Lectures", "LECTURES"]) == .ambiguous)
+        #expect(FileStore.migrationDirectoryEntryMatch("Lectures", entries: ["Other"]) == .missing)
+    }
+
+    @Test func migrationDestinationTreatsSymlinkParentAsOccupied() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let actualParent = root.appending(path: "Actual")
+        try FileManager.default.createDirectory(at: actualParent, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: root.appending(path: "Course"), withDestinationURL: actualParent)
+        let store = try FileStore(root: root)
+
+        #expect(try await store.migrationDestinationIsOccupied(RelativePath("Course/Custom/file.pdf")))
+    }
+
+    @Test func repeatedMigrationDestinationChecksStillSeeOccupiedEntries() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let occupied = root.appending(path: "Course/Custom/file.pdf")
+        try FileManager.default.createDirectory(at: occupied.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("local".utf8).write(to: occupied)
+        let store = try FileStore(root: root)
+
+        #expect(!(try await store.migrationDestinationIsOccupied(RelativePath("Missing/file.pdf"))))
+        #expect(try await store.migrationDestinationIsOccupied(RelativePath("Course/Custom/file.pdf")))
+        #expect(try await store.migrationDestinationIsOccupied(RelativePath("Course/Custom/file.pdf")))
+    }
+
     private func temporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

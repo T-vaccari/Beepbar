@@ -2,7 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 
-public enum FileStoreError: Error, Sendable, Equatable { case invalidRoot, symbolicLink, invalidStage, localChanged, sizeMismatch, tooLarge, ioFailure }
+public enum FileStoreError: Error, Sendable, Equatable { case invalidRoot, symbolicLink, invalidStage, localChanged, destinationExists, sizeMismatch, tooLarge, ioFailure }
 
 private struct FileIdentity: Sendable, Equatable {
     let device: Int64
@@ -37,6 +37,8 @@ public enum InstallResult: Sendable, Equatable {
 }
 
 public enum TopLevelDirectoryState: Sendable, Equatable { case missing, directory, other }
+
+enum MigrationDirectoryEntryMatch: Equatable { case missing, exact, differentSpelling, ambiguous }
 
 public actor FileStore {
     private let rootFD: Int32
@@ -83,6 +85,120 @@ public actor FileStore {
         defer { close(fd) }
         try requireRegularFile(fd)
         return true
+    }
+
+    public func snapshotRegularFile(_ path: RelativePath) throws -> FileSnapshotState {
+        try requireMovablePath(path)
+        let (parent, name): (Int32, String)
+        do { (parent, name) = try parentDirectory(for: path, create: false) }
+        catch where errno == ENOENT { return .missing }
+        defer { close(parent) }
+        let fd = openat(parent, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        if fd < 0 { if errno == ENOENT { return .missing }; throw fileStoreError() }
+        defer { close(fd) }
+        try requireRegularFile(fd)
+        let identity = try Self.identity(of: fd)
+        return .present(FileSnapshot(device: identity.device, inode: identity.inode, sha256: try sha256(of: fd)))
+    }
+
+    public func regularFileIdentity(_ path: RelativePath) throws -> DirectoryIdentity? {
+        try requireMovablePath(path)
+        let (parent, name): (Int32, String)
+        do { (parent, name) = try parentDirectory(for: path, create: false) }
+        catch where errno == ENOENT { return nil }
+        defer { close(parent) }
+        let fd = openat(parent, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        if fd < 0 { if errno == ENOENT { return nil }; throw fileStoreError() }
+        defer { close(fd) }
+        try requireRegularFile(fd)
+        let identity = try Self.identity(of: fd)
+        return DirectoryIdentity(device: identity.device, inode: identity.inode)
+    }
+
+    public func destinationIsOccupied(_ path: RelativePath) throws -> Bool {
+        try requireMovablePath(path)
+        let (parent, name): (Int32, String)
+        do { (parent, name) = try parentDirectory(for: path, create: false) }
+        catch where errno == ENOENT { return false }
+        defer { close(parent) }
+        var metadata = stat()
+        if fstatat(parent, name, &metadata, AT_SYMLINK_NOFOLLOW) == 0 { return true }
+        if errno == ENOENT { return false }
+        throw fileStoreError()
+    }
+
+    public func migrationDestinationIsOccupied(_ path: RelativePath) throws -> Bool {
+        try requireMovablePath(path)
+        var parent = dup(rootFD)
+        guard parent >= 0 else { throw fileStoreError() }
+        defer { close(parent) }
+        for (index, component) in path.components.enumerated() {
+            let match = Self.migrationDirectoryEntryMatch(component, entries: try directoryEntryNames(at: parent))
+            switch match {
+            case .missing:
+                return false
+            case .differentSpelling, .ambiguous:
+                return true
+            case .exact:
+                if index == path.components.count - 1 { return true }
+                let next = openat(parent, component, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+                guard next >= 0 else {
+                    if errno == ENOENT || errno == ENOTDIR || errno == ELOOP { return true }
+                    throw fileStoreError()
+                }
+                close(parent)
+                parent = next
+            }
+        }
+        return false
+    }
+
+    static func migrationDirectoryEntryMatch(_ component: String, entries: [String]) -> MigrationDirectoryEntryMatch {
+        let key = component.precomposedStringWithCanonicalMapping.lowercased()
+        let matches = entries.filter { $0.precomposedStringWithCanonicalMapping.lowercased() == key }
+        guard matches.count == 1 else { return matches.isEmpty ? .missing : .ambiguous }
+        return matches[0].utf8.elementsEqual(component.utf8) ? .exact : .differentSpelling
+    }
+
+    public func moveRegularFile(from source: RelativePath, to destination: RelativePath, expected: FileSnapshot) throws {
+        try requireMovablePath(source)
+        try requireMovablePath(destination)
+        guard source != destination else { return }
+        guard case .present(let current) = try snapshotRegularFile(source),
+              current.device == expected.device, current.inode == expected.inode,
+              current.sha256 == expected.sha256 else { throw FileStoreError.localChanged }
+        let (sourceParent, sourceName) = try parentDirectory(for: source, create: false)
+        defer { close(sourceParent) }
+        let (destinationParent, destinationName) = try parentDirectory(for: destination, create: true)
+        defer { close(destinationParent) }
+        guard renameatx_np(sourceParent, sourceName, destinationParent, destinationName, UInt32(RENAME_EXCL)) == 0 else {
+            if errno == EEXIST { throw FileStoreError.destinationExists }
+            throw fileStoreError()
+        }
+        guard fsync(sourceParent) == 0, fsync(destinationParent) == 0 else { throw fileStoreError() }
+    }
+
+    public func moveRegularFilePreservingCurrentContents(from source: RelativePath, to destination: RelativePath, expected: FileSnapshot) throws {
+        try requireMovablePath(source)
+        try requireMovablePath(destination)
+        guard source != destination else { return }
+        let (sourceParent, sourceName) = try parentDirectory(for: source, create: false)
+        defer { close(sourceParent) }
+        let sourceFD = openat(sourceParent, sourceName, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard sourceFD >= 0 else { throw fileStoreError() }
+        defer { close(sourceFD) }
+        try requireRegularFile(sourceFD)
+        guard try Self.identity(of: sourceFD) == FileIdentity(device: expected.device, inode: expected.inode) else { throw FileStoreError.localChanged }
+        let (destinationParent, destinationName) = try parentDirectory(for: destination, create: true)
+        defer { close(destinationParent) }
+        var current = stat()
+        guard fstatat(sourceParent, sourceName, &current, AT_SYMLINK_NOFOLLOW) == 0,
+              Int64(current.st_dev) == expected.device, UInt64(current.st_ino) == expected.inode else { throw FileStoreError.localChanged }
+        guard renameatx_np(sourceParent, sourceName, destinationParent, destinationName, UInt32(RENAME_EXCL)) == 0 else {
+            if errno == EEXIST { throw FileStoreError.destinationExists }
+            throw fileStoreError()
+        }
+        guard fsync(sourceParent) == 0, fsync(destinationParent) == 0 else { throw fileStoreError() }
     }
 
     /// Returns the subset of `paths` that currently exist as regular files, using one `stat` per path and
@@ -433,8 +549,32 @@ public actor FileStore {
         return (try directoryFD(for: Array(components.dropLast()), create: create), components.last!)
     }
 
+    private func directoryEntryNames(at fd: Int32) throws -> [String] {
+        let copy = openat(fd, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+        guard copy >= 0 else { throw fileStoreError() }
+        guard let directory = fdopendir(copy) else { close(copy); throw fileStoreError() }
+        defer { closedir(directory) }
+        var names: [String] = []
+        while true {
+            errno = 0
+            guard let entry = readdir(directory) else {
+                if errno != 0 { throw fileStoreError() }
+                break
+            }
+            let name = withUnsafePointer(to: &entry.pointee.d_name) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: entry.pointee.d_name)) { String(cString: $0) }
+            }
+            names.append(name)
+        }
+        return names
+    }
+
     private func isSafeTopLevelName(_ name: String) -> Bool {
         !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.utf8.contains(0) && !ReservedNamespace.isReservedTopLevelName(name)
+    }
+
+    private func requireMovablePath(_ path: RelativePath) throws {
+        guard path.components.allSatisfy({ !ReservedNamespace.isReservedComponent($0) }) else { throw FileStoreError.invalidStage }
     }
 
     private func directoryFD(for components: [String], create: Bool) throws -> Int32 {

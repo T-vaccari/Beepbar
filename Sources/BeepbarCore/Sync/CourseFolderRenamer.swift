@@ -24,6 +24,7 @@ public actor CourseFolderRenamer {
         guard oldFolder != newFolder, oldFolder.localizedCaseInsensitiveCompare(newFolder) != .orderedSame,
               !ReservedNamespace.isReservedTopLevelName(newFolder) else { throw FileStoreError.invalidStage }
         try await gate.withLease(.renaming(courseID)) { [database, fileStore] in
+            guard try await database.hasPendingModuleMoves(rootID: rootID) == false else { throw SyncDatabaseError.execution }
             guard !(try await database.hasOpenConflicts(rootID: rootID, prefix: oldFolder)),
                   !(try await database.hasPendingOperations(rootID: rootID, prefix: oldFolder)),
                   let scope = try await database.scope(rootID: rootID, courseID: courseID), scope.localFolder == oldFolder else { throw SyncDatabaseError.execution }

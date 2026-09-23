@@ -71,22 +71,36 @@ public enum LocalPathPolicy {
         return currentDefault
     }
 
-    public static func destination(courseFolder: String, file: RemoteFileCandidate) throws -> RelativePath {
+    public static func destination(courseFolder: String, file: RemoteFileCandidate, moduleFolderOverride: String? = nil) throws -> RelativePath {
         let course = component(courseFolder)
         let module = component(file.moduleName)
         let remotePath = try file.remoteFilePath.split(separator: "/", omittingEmptySubsequences: true)
             .map { try validRemoteComponent(String($0)) }
         let sectionName = file.sectionName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefix = sectionName.isEmpty || sectionName.localizedCaseInsensitiveContains("material")
-            ? [course]
-            : [course, component(sectionName)]
+        let prefix: [String]
+        if let moduleFolderOverride {
+            prefix = [course] + (try moduleFolder(moduleFolderOverride).components)
+        } else {
+            prefix = sectionName.isEmpty || sectionName.localizedCaseInsensitiveContains("material")
+                ? [course]
+                : [course, component(sectionName)]
+        }
         if file.moduleType == "resource", file.isSingleFileResource {
             let ext = URL(fileURLWithPath: file.filename).pathExtension
             let resourceName = ext.isEmpty ? module : "\(module).\(component(ext))"
             return try RelativePath((prefix + remotePath + [resourceName]).joined(separator: "/"))
         }
-        let modulePrefix = file.moduleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [module]
+        let modulePrefix = moduleFolderOverride == nil && !file.moduleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [module] : []
         return try RelativePath((prefix + modulePrefix + remotePath + [fileComponent(file.filename)]).joined(separator: "/"))
+    }
+
+    public static func moduleFolder(_ input: String) throws -> RelativePath {
+        guard input.utf8.count <= 512 else { throw RelativePathError.invalid }
+        let path = try RelativePath(input)
+        guard path.components.allSatisfy({
+            $0.utf8.count <= 255 && !ReservedNamespace.isReservedComponent($0)
+        }) else { throw RelativePathError.invalid }
+        return path
     }
 
     public static func uniqueDestination(_ destination: RelativePath, reserving paths: inout Set<String>) throws -> RelativePath {

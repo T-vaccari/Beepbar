@@ -1021,6 +1021,56 @@ struct MenuBarSnapshot: Sendable {
         courseFolders[course.id] ?? defaultFolder(for: course)
     }
 
+    func modulePathRules(for course: RemoteCourseSummary) async throws -> [ModulePathRuleRow] {
+        await bootstrapTask?.value
+        guard !recoveryBlocked, let rootURL, let rootID, let database else { throw ModulePathMigrationError.pendingRecovery }
+        let token = try await credentialVault.load()
+        let contents = try await apiClient.fetchContents(courseID: course.id, token: token)
+        let migrator = ModulePathMigrator(rootID: rootID, database: database, fileStore: try FileStore(root: rootURL), gate: operationGate, apiClient: apiClient)
+        return try await migrator.ruleRows(courseID: course.id, contents: contents)
+    }
+
+    func previewModulePath(for course: RemoteCourseSummary, moduleID: Int64, action: ModuleMoveAction, proposedFolder: String?) async throws -> ModuleMovePreview {
+        await bootstrapTask?.value
+        guard !recoveryBlocked, let rootURL, let rootID, let database else { throw ModulePathMigrationError.pendingRecovery }
+        let token = try await credentialVault.load()
+        let contents = try await apiClient.fetchContents(courseID: course.id, token: token)
+        let migrator = ModulePathMigrator(rootID: rootID, database: database, fileStore: try FileStore(root: rootURL), gate: operationGate, apiClient: apiClient)
+        return try await migrator.preview(courseID: course.id, moduleID: moduleID, courseFolder: folder(for: course), action: action, folder: proposedFolder, contents: contents)
+    }
+
+    func applyModulePath(_ preview: ModuleMovePreview, for course: RemoteCourseSummary) async throws {
+        await bootstrapTask?.value
+        guard !recoveryBlocked, let rootURL, let rootID, let database else { throw ModulePathMigrationError.pendingRecovery }
+        let token = try await credentialVault.load()
+        let migrator = ModulePathMigrator(rootID: rootID, database: database, fileStore: try FileStore(root: rootURL), gate: operationGate, apiClient: apiClient)
+        do {
+            try await migrator.apply(preview, courseFolder: folder(for: course), token: token)
+        } catch {
+            if (try? await database.hasPendingModuleMoves(rootID: rootID)) == true {
+                recoveryBlocked = true
+                setSyncState(.recoveryBlocked)
+            }
+            throw error
+        }
+    }
+
+    func deleteUnavailableModuleRule(for course: RemoteCourseSummary, moduleID: Int64) async throws {
+        await bootstrapTask?.value
+        guard !recoveryBlocked, let rootURL, let rootID, let database else { throw ModulePathMigrationError.pendingRecovery }
+        let token = try await credentialVault.load()
+        let migrator = ModulePathMigrator(rootID: rootID, database: database, fileStore: try FileStore(root: rootURL), gate: operationGate, apiClient: apiClient)
+        do {
+            try await migrator.deleteUnavailableRule(courseID: course.id, moduleID: moduleID, token: token)
+        } catch {
+            if (try? await database.hasPendingModuleMoves(rootID: rootID)) == true {
+                recoveryBlocked = true
+                setSyncState(.recoveryBlocked)
+            }
+            throw error
+        }
+    }
+
     private func defaultFolder(for course: RemoteCourseSummary) -> String {
         defaultCourseFolders[course.id] ?? LocalPathPolicy.defaultCourseFolder(course.displayName)
     }

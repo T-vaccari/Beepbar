@@ -5,6 +5,7 @@ public enum RootOperation: Sendable, Equatable {
     case syncing(UUID)
     case resolving(UUID)
     case renaming(Int64)
+    case movingModule(Int64, Int64)
 }
 
 public enum RootOperationGateError: Error, Sendable, Equatable {

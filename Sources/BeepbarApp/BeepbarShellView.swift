@@ -80,6 +80,7 @@ private struct HomePage: View {
     let open: (BeepbarShellView.Page) -> Void
     @State private var editingCourseID: Int64?
     @State private var proposedFolder = ""
+    @State private var organizingCourse: RemoteCourseSummary?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -88,6 +89,9 @@ private struct HomePage: View {
                 .layoutPriority(1)
         }
         .padding(20)
+        .sheet(item: $organizingCourse) { course in
+            ModuleDestinationsSheet(authentication: authentication, course: course)
+        }
     }
 
     private var syncCard: some View {
@@ -218,6 +222,11 @@ private struct HomePage: View {
                             }
                             .disabled(authentication.renamingCourseID == course.id)
                             Spacer(minLength: 0)
+                            Button("Organizza cartelle…") { organizingCourse = course }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .accessibilityLabel("Organizza cartelle per \(course.displayName)")
+                                .disabled(authentication.isSyncActive || authentication.recoveryBlocked || authentication.accountState != .connected || authentication.rootURL == nil)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 4)
@@ -374,6 +383,217 @@ private struct ConflictsPage: View {
             }
         }
         .padding(20)
+    }
+}
+
+private struct ModuleDestinationsSheet: View {
+    @ObservedObject var authentication: WeBeepAuthenticationController
+    let course: RemoteCourseSummary
+    @Environment(\.dismiss) private var dismiss
+    @State private var rows: [ModulePathRuleRow] = []
+    @State private var isLoading = true
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+    @State private var editingModuleID: Int64?
+    @State private var folder = ""
+    @State private var preview: ModuleMovePreview?
+    @State private var showApplyConfirmation = false
+    @State private var ruleToDelete: ModulePathRuleRow?
+    @State private var showDeleteConfirmation = false
+
+    private var availableRows: [ModulePathRuleRow] { rows.filter(\.isAvailable) }
+    private var unavailableRows: [ModulePathRuleRow] { rows.filter { !$0.isAvailable } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Organizza cartelle · \(course.displayName)").font(.title2.weight(.semibold))
+            if isLoading {
+                ProgressView("Caricamento moduli Moodle…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                if let errorMessage { Text(errorMessage).font(.callout).foregroundStyle(.red) }
+                Text("Scegli una cartella relativa alla cartella del corso. Senza una regola, Beepbar usa l’organizzazione Moodle.")
+                    .font(.callout).foregroundStyle(.secondary)
+                List {
+                    Section("Moduli disponibili") {
+                        if availableRows.isEmpty {
+                            Text("Nessun modulo disponibile.").foregroundStyle(.secondary)
+                        }
+                        ForEach(availableRows) { row in
+                            moduleRow(row)
+                        }
+                    }
+                    if !unavailableRows.isEmpty {
+                        Section("Regole per moduli non più presenti") {
+                            ForEach(unavailableRows) { row in
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(row.name)
+                                        Text("\(row.trackedFileCount) file tracciati · \(row.localFolder ?? "")")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Button("Elimina regola") {
+                                        ruleToDelete = row
+                                        showDeleteConfirmation = true
+                                    }
+                                    .disabled(isWorking || authentication.recoveryBlocked)
+                                }
+                                .padding(.vertical, 3)
+                            }
+                        }
+                    }
+                }
+                .listStyle(.inset)
+                if let preview { previewPanel(preview) }
+            }
+            HStack {
+                Spacer()
+                Button("Chiudi") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 620, minHeight: 500)
+        .task { await reload() }
+        .confirmationDialog("Spostare i file del modulo?", isPresented: $showApplyConfirmation, titleVisibility: .visible) {
+            Button("Conferma spostamento") { applyPreview() }
+            Button("Annulla", role: .cancel) {}
+        } message: {
+            Text("I file modificati localmente vengono spostati senza essere sovrascritti. Le destinazioni occupate bloccano l’operazione.")
+        }
+        .confirmationDialog("Eliminare questa regola?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+            Button("Elimina regola", role: .destructive) { deleteRule() }
+            Button("Annulla", role: .cancel) { ruleToDelete = nil }
+        } message: {
+            Text("I file locali non verranno spostati né eliminati.")
+        }
+    }
+
+    @ViewBuilder private func moduleRow(_ row: ModulePathRuleRow) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(row.name)
+                    Text("\(row.exposedFileCount) file esposti · \(row.trackedFileCount) tracciati")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let localFolder = row.localFolder {
+                    Text(localFolder).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Button("Cambia destinazione…") {
+                        editingModuleID = row.moduleID
+                        folder = localFolder
+                        preview = nil
+                    }
+                    .disabled(isWorking || authentication.recoveryBlocked)
+                    Button("Ripristina layout Moodle") { requestPreview(for: row, action: .remove, folder: nil) }
+                        .disabled(isWorking || authentication.recoveryBlocked)
+                } else {
+                    Button("Personalizza") {
+                        editingModuleID = row.moduleID
+                        folder = ""
+                        preview = nil
+                    }
+                    .disabled(isWorking || authentication.recoveryBlocked)
+                }
+            }
+            if editingModuleID == row.moduleID {
+                HStack {
+                    TextField("Cartella, ad esempio materiali/slide", text: $folder)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Anteprima") { requestPreview(for: row, action: .set, folder: folder) }
+                        .disabled(isWorking || folder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Annulla") { editingModuleID = nil; preview = nil }
+                        .disabled(isWorking)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func previewPanel(_ preview: ModuleMovePreview) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Anteprima · \(preview.lastKnownName)").font(.headline)
+            Text("\(preview.changedFileCount) file da spostare; \(preview.localModifiedCount) con modifiche locali preservate.")
+            if !preview.excludedRemoteIDs.isEmpty {
+                Text("\(preview.excludedRemoteIDs.count) file tracciati ma non esposti da Moodle restano nella posizione attuale.")
+            }
+            if preview.ownerlessBaselineCount > 0 {
+                Text("\(preview.ownerlessBaselineCount) file storici senza modulo attribuibile non vengono spostati.")
+            }
+            HStack {
+                Spacer()
+                Button(isWorking ? "Applicazione…" : "Conferma anteprima") { showApplyConfirmation = true }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isWorking || authentication.recoveryBlocked)
+            }
+        }
+        .font(.callout)
+        .padding(12)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @MainActor private func reload() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            rows = try await authentication.modulePathRules(for: course)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func requestPreview(for row: ModulePathRuleRow, action: ModuleMoveAction, folder: String?) {
+        isWorking = true
+        errorMessage = nil
+        Task { @MainActor in
+            defer { isWorking = false }
+            do {
+                preview = try await authentication.previewModulePath(for: course, moduleID: row.moduleID, action: action, proposedFolder: folder)
+                editingModuleID = nil
+            } catch {
+                preview = nil
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func applyPreview() {
+        guard let preview else { return }
+        isWorking = true
+        errorMessage = nil
+        Task { @MainActor in
+            defer { isWorking = false }
+            do {
+                try await authentication.applyModulePath(preview, for: course)
+                self.preview = nil
+                await reload()
+            } catch {
+                self.preview = nil
+                let message = error.localizedDescription
+                await reload()
+                errorMessage = message
+            }
+        }
+    }
+
+    private func deleteRule() {
+        guard let row = ruleToDelete else { return }
+        isWorking = true
+        errorMessage = nil
+        Task { @MainActor in
+            defer { isWorking = false; ruleToDelete = nil }
+            do {
+                try await authentication.deleteUnavailableModuleRule(for: course, moduleID: row.moduleID)
+                await reload()
+            } catch {
+                let message = error.localizedDescription
+                await reload()
+                errorMessage = message
+            }
+        }
     }
 }
 

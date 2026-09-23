@@ -46,6 +46,17 @@ public actor RecoveryCoordinator {
             case .conflict: break
             }
         }
+        for move in try await database.pendingModuleMoves(rootID: rootID) {
+            do {
+                if try await ModuleMoveRecovery.recover(move, database: database, fileStore: fileStore) {
+                    report = RecoveryReport(recovered: report.recovered + [move.id], conflicts: report.conflicts, unresolved: report.unresolved)
+                } else {
+                    report = RecoveryReport(recovered: report.recovered, conflicts: report.conflicts, unresolved: report.unresolved + [move.id])
+                }
+            } catch {
+                report = RecoveryReport(recovered: report.recovered, conflicts: report.conflicts, unresolved: report.unresolved + [move.id])
+            }
+        }
         return report
     }
 
@@ -54,7 +65,7 @@ public actor RecoveryCoordinator {
     private func recover(_ operation: PendingOperation) async throws -> Outcome {
         let stage = try await fileStore.stagedArtifact(at: operation.stagePath)
         let destination = try await fileStore.inspect(operation.destination)
-        let baseline = Baseline(remoteID: operation.remoteID, relativePath: operation.destination, sha256: operation.remoteSHA256, remoteRevision: operation.remoteRevision)
+        let baseline = Baseline(remoteID: operation.remoteID, relativePath: operation.destination, sha256: operation.remoteSHA256, remoteRevision: operation.remoteRevision, courseID: operation.courseID, moduleID: operation.moduleID)
 
         switch operation.phase {
         case .prepared:
