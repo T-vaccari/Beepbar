@@ -39,6 +39,12 @@ struct BeepbarApp: App {
         BeepbarLog.lifecycle.notice("Application launched version=\(version, privacy: .public) build=\(build, privacy: .public)")
         _ = UpdaterController.shared
         statusItemController = StatusItemController(authentication: authentication)
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ui-preview") {
+            ConfigurationWindowController.shared.show(authentication)
+            return
+        }
+#endif
         guard authentication.needsOnboarding else { return }
         ConfigurationWindowController.shared.show(authentication)
     }
@@ -160,8 +166,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     static let shared = ConfigurationWindowController()
     private var window: NSWindow?
     private var appearanceTrace: OSSignpostIntervalState?
+    private let router = ShellRouter()
+    private static let frameAutosaveName = "BeepbarConfigurationWindow"
 
-    func show(_ authentication: WeBeepAuthenticationController) {
+    func show(_ authentication: WeBeepAuthenticationController, page: ShellPage? = nil) {
         BeepbarLog.lifecycle.notice("Configuration window requested")
         if window?.isKeyWindow != true {
             if let appearanceTrace {
@@ -169,22 +177,35 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
             appearanceTrace = PerformanceTrace.shared.begin("ui.configurationWindow", category: .ui)
         }
+        if let page { router.page = page }
+        // Activate before ordering the window in: with macOS 14+ cooperative activation the
+        // deprecated `activate(ignoringOtherApps:)` is ignored, which left the window open but
+        // inactive, so the first click only activated the app and seemed to do nothing.
+        NSApp.activate()
         if let window {
             window.makeKeyAndOrderFront(nil)
         } else {
-            let controller = NSHostingController(rootView: BeepbarShellView(authentication: authentication))
+            let controller = NSHostingController(rootView: BeepbarShellView(authentication: authentication, router: router))
+            // Only let SwiftUI enforce the minimum size; otherwise the window keeps resizing
+            // itself to the content's ideal size on every page switch.
+            controller.sizingOptions = [.minSize]
             let window = NSWindow(contentViewController: controller)
             window.title = "Beepbar"
-            window.setContentSize(NSSize(width: 760, height: 640))
-            window.minSize = NSSize(width: 640, height: 480)
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.setContentSize(NSSize(width: 780, height: 680))
+            window.minSize = NSSize(width: 680, height: 520)
             window.isReleasedWhenClosed = false
             window.delegate = self
+            // The window object is rebuilt on every open (see windowWillClose), so let AppKit
+            // remember where the user left it.
+            if !window.setFrameUsingName(Self.frameAutosaveName) { window.center() }
+            window.setFrameAutosaveName(Self.frameAutosaveName)
             self.window = window
             window.makeKeyAndOrderFront(nil)
         }
         authentication.refreshOnWindowOpen()
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -192,68 +213,22 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             PerformanceTrace.shared.end("ui.configurationWindow", category: .ui, state: appearanceTrace)
         }
         appearanceTrace = nil
+        // Drop the whole SwiftUI hierarchy once the window is gone, so that a closed window keeps
+        // no view graph subscribed to the controller's @Published state: background syncs then
+        // cost exactly what they cost without any UI. Deferred to the next main-actor turn so
+        // AppKit finishes closing first; skipped if the window was reopened in the meantime.
+        // This reuses the pre-existing delegate callback — no new AppKit→@MainActor entry point.
+        Task { @MainActor [weak self] in
+            guard let self, let window = self.window, !window.isVisible else { return }
+            window.delegate = nil
+            self.window = nil
+            self.router.page = .home
+        }
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
         guard let appearanceTrace else { return }
         PerformanceTrace.shared.end("ui.configurationWindow", category: .ui, state: appearanceTrace)
         self.appearanceTrace = nil
-    }
-}
-
-@MainActor final class ConflictWindowController: NSObject, NSWindowDelegate {
-    static let shared = ConflictWindowController()
-    private var window: NSWindow?
-
-    func show(_ authentication: WeBeepAuthenticationController) {
-        authentication.refreshConflicts()
-        if let window {
-            window.makeKeyAndOrderFront(nil)
-        } else {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: ConflictListView(authentication: authentication)))
-            window.title = "Conflitti Beepbar"
-            window.setContentSize(NSSize(width: 680, height: 420))
-            window.minSize = NSSize(width: 520, height: 280)
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.isReleasedWhenClosed = false
-            window.delegate = self
-            self.window = window
-            window.makeKeyAndOrderFront(nil)
-        }
-        NSApp.activate(ignoringOtherApps: true)
-    }
-}
-
-private struct ConflictListView: View {
-    @ObservedObject var authentication: WeBeepAuthenticationController
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Conflitti") .font(.title2.weight(.semibold))
-            Text("Le versioni remote sono conservate separatamente; nessun file locale è stato sovrascritto.")
-                .font(.caption).foregroundStyle(.secondary)
-            if authentication.conflicts.isEmpty {
-                ContentUnavailableView("Nessun conflitto aperto", systemImage: "checkmark.circle")
-            } else {
-                List(authentication.conflicts) { conflict in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(conflict.relativePath.value).font(.body.weight(.medium))
-                        Text("Versione remota conservata: \(conflict.incomingPath.value)")
-                            .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                        HStack {
-                            Button("Mantieni locale") { authentication.resolve(conflict, with: .keepLocal) }
-                            Button("Usa versione remota") { authentication.resolve(conflict, with: .useRemote) }
-                                .buttonStyle(.borderedProminent)
-                        }
-                        .disabled(authentication.resolvingConflictID != nil)
-                    }
-                }
-            }
-            HStack {
-                Spacer()
-                Button("Aggiorna") { authentication.refreshConflicts() }
-            }
-        }
-        .padding()
     }
 }
