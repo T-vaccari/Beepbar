@@ -21,6 +21,17 @@
 - Synchronization no longer fills the disk with leftover downloads. Every downloaded file was copied into place but its temporary copy was never removed, so a large sync could quietly take up twice the space it reported, and refused or interrupted downloads left their own leftovers behind; nothing cleaned them up until the Mac was restarted.
 - A course whose material carries an implausible modification date no longer makes Beepbar quit in the middle of a synchronization, on that run and on every retry. That single entry is now reported as unreadable and the rest of the course is synchronized normally.
 - Duplicate entries coming from WeBeep or from the local database no longer make Beepbar quit while preparing a synchronization or while restoring your course selection; the first entry is kept and the run continues.
+- A single course that WeBeep or Moodle refuses to open (a course you are no longer enrolled in, a hidden or restricted one) no longer stops every other course from synchronizing. The other courses are synchronized normally and the refused one is listed as "Corso non accessibile" in the sync details. Scheduled synchronizations also skip courses you are no longer enrolled in, which used to make every scheduled run fail at the end of a semester.
+- "Sincronizza ora" from the menu bar now works right after Beepbar starts. Until the window had been opened once, it silently did nothing and just showed "Pronto".
+- A module folder move that could not be completed no longer blocks synchronization with no way out: "Abbandona spostamento…" gives up on it without moving or deleting any file, and records where each file really is (#49). A successful move now also removes the old module folder when it is left empty.
+- Starting a synchronization while a rename or a folder move is in progress now says so, instead of reporting an incomplete synchronization.
+- Course folders that already existed before the first synchronization can now be renamed.
+- Cancelling a sign-in no longer empties the course list.
+- Errors in "Organizza cartelle" are now shown in Italian instead of as a generic English system message.
+- Counts now use the correct singular form: "1 conflitto da risolvere" instead of "1 conflitti da risolvere", in the menu bar and in notifications (#46).
+- A scheduled check with no selected courses no longer replaces the last synchronization result with "Pronto".
+- Choosing the sync folder through a symbolic link now uses the real folder, so the same folder is never tracked twice.
+- Typing the name of a new folder in the "Scegli cartella" panel works again. Beepbar lives in the menu bar, and the panel could appear without receiving the keyboard; while the panel is open Beepbar now briefly shows in the Dock so the panel gets focus.
 
 ### Performance
 
@@ -29,6 +40,8 @@
 
 ### Added and changed
 
+- Release numbers now move to the next minor version every hundred builds instead of growing the last number indefinitely: after 2.0.99 comes 2.1.0. Existing installs still see every new release as an update.
+- Add "Disconnetti…" in Settings to remove the stored token, so another account or another university can be connected. Switching university turns off the previous university's course selection, because course numbers are only meaningful within one site.
 - Keep synchronization controls visible while scrolling long course lists.
 - Show how many materials were added or updated after every completed synchronization.
 - Add a per-course breakdown ("Dettaglio") of what changed in the last sync, with newly-selected courses grouped to the top after syncing.

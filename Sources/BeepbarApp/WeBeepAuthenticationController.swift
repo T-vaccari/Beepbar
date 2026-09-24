@@ -64,7 +64,7 @@ enum AppSyncState: Equatable {
         case .syncing: "Sincronizzazione in corso"
         case .cancelling: "Annullamento in corso"
         case .synced: "Sincronizzato"
-        case .conflicts(let count, _): "\(count) conflitti da risolvere"
+        case .conflicts(let count, _): SyncCopy.conflictsTitle(count)
         case .partial: "Sincronizzazione incompleta"
         case .failed(let failure): failure.title
         case .recoveryBlocked: "Intervento richiesto"
@@ -152,10 +152,39 @@ struct SyncCompletionSummary: Codable, Equatable {
     }
 
     var conflictDetail: String { detail + " Apri Conflitti per scegliere quale versione mantenere." }
-    var partialDetail: String { "\(failures) materiali non aggiornati. I file esistenti sono al sicuro." }
+    var partialDetail: String {
+        let failedCourses = perCourse.filter { $0.courseFailure != nil }.count
+        return SyncCopy.partialDetail(failedFiles: max(0, failures - failedCourses), failedCourses: failedCourses)
+    }
     private var preservedSuffix: String {
         guard preservedLocal > 0 else { return "" }
         return preservedLocal == 1 ? " 1 modifica locale conservata." : " \(preservedLocal) modifiche locali conservate."
+    }
+}
+
+/// User-facing counts, with Italian singular and plural forms.
+enum SyncCopy {
+    static func conflictsTitle(_ count: Int) -> String {
+        count == 1 ? "1 conflitto da risolvere" : "\(count) conflitti da risolvere"
+    }
+
+    static func conflictNotificationBody(_ count: Int) -> String {
+        count == 1
+            ? "Beepbar ha conservato separatamente 1 versione remota."
+            : "Beepbar ha conservato separatamente \(count) versioni remote."
+    }
+
+    static func newMaterialsNotificationBody(_ count: Int) -> String {
+        count == 1
+            ? "Beepbar ha aggiunto 1 materiale nella cartella scelta."
+            : "Beepbar ha aggiunto \(count) materiali nella cartella scelta."
+    }
+
+    static func partialDetail(failedFiles: Int, failedCourses: Int) -> String {
+        var parts: [String] = []
+        if failedCourses > 0 { parts.append(failedCourses == 1 ? "1 corso non accessibile." : "\(failedCourses) corsi non accessibili.") }
+        if failedFiles > 0 || parts.isEmpty { parts.append(failedFiles == 1 ? "1 materiale non aggiornato." : "\(failedFiles) materiali non aggiornati.") }
+        return (parts + ["I file esistenti sono al sicuro."]).joined(separator: " ")
     }
 }
 
@@ -244,6 +273,8 @@ struct MenuBarSnapshot: Sendable {
         didSet { refreshMenuBarSnapshot() }
     }
     @Published private(set) var resolvingConflictID: UUID?
+    /// A module move left half done that recovery cannot finish; the user can abandon it.
+    @Published private(set) var hasPendingModuleMoves = false
     // Default folder name per course id, derived from `courses` and rebuilt only when that list
     // changes: `folder(for:)` runs for every row on every render of the course list, so it has
     // to be a lookup, not a rescan of every course name.
@@ -360,6 +391,7 @@ struct MenuBarSnapshot: Sendable {
     /// Applies the outcome of the launch bootstrap or of a recovery retry. A blocked recovery keeps
     /// every root operation gated; otherwise the account and the persisted sync state are restored.
     private func applyBootstrap(_ result: BootstrapService.Result) async {
+        await refreshPendingModuleMoves()
         if result.recoveryBlocked {
             recoveryBlocked = true
             setSyncState(.recoveryBlocked)
@@ -404,6 +436,71 @@ struct MenuBarSnapshot: Sendable {
             } catch {
                 self?.setSyncState(.recoveryBlocked)
             }
+        }
+    }
+
+    private func refreshPendingModuleMoves() async {
+        guard let database, let rootID else { hasPendingModuleMoves = false; return }
+        hasPendingModuleMoves = (try? await database.hasPendingModuleMoves(rootID: rootID)) ?? false
+    }
+
+    /// Gives up on every module move recovery cannot finish (issue #49). Files are never touched:
+    /// each one keeps the path it is really at, and the module keeps its previous folder rule.
+    /// Recovery then runs again so the root unblocks if nothing else is pending.
+    func abandonPendingModuleMoves() {
+        guard recoveryBlocked, hasPendingModuleMoves, !isSyncActive, let rootURL, let rootID, let database else { return }
+        setSyncState(.starting)
+        let operationGate = self.operationGate
+        Task { [weak self] in
+            do {
+                try await operationGate.withLease(.recovering) {
+                    let fileStore = try FileStore(root: rootURL)
+                    for move in try await database.pendingModuleMoves(rootID: rootID) {
+                        try await ModuleMoveRecovery.abandon(move, database: database, fileStore: fileStore)
+                    }
+                }
+                let result = try await BootstrapService().retryRecovery(rootURL: rootURL, rootID: rootID, database: database, gate: operationGate)
+                await self?.applyBootstrap(result)
+            } catch {
+                await self?.refreshPendingModuleMoves()
+                self?.setSyncState(.recoveryBlocked)
+            }
+        }
+    }
+
+    /// Forgets the stored token so another account, or another university, can be connected.
+    /// The sync folder, its files and the course selection stay as they are.
+    func signOut() {
+        guard hasStoredCredential, !isSyncActive, !isAuthenticating, !isLoadingCourses else { return }
+        FileTokenStore.delete()
+        Task { await credentialVault.invalidate() }
+        Self.defaults.removeObject(forKey: Self.credentialExpiredKey)
+        notificationCoordinator.clearFailure()
+        siteInfo = nil
+        courses = []
+        courseLoadError = nil
+        hasStoredCredential = false
+        accountState = .notConnected
+        setSyncState(recoveryBlocked ? .recoveryBlocked : .loginRequired)
+        configureBackgroundScheduler()
+    }
+
+    /// Italian text for an error raised while organizing module folders. Errors that already carry
+    /// a description keep it; the rest would otherwise surface as a generic English system string.
+    nonisolated static func moduleFolderErrorMessage(_ error: Error) -> String {
+        switch error {
+        case let error as ModulePathMigrationError: return error.errorDescription ?? "Operazione non riuscita. Riprova."
+        case is RootOperationGateError: return "Un'altra operazione è in corso sulla cartella. Riprova tra poco."
+        case let error as WeBeepAPIError:
+            switch SyncServiceFailure(error) {
+            case .authenticationExpired: return AppFailure.authenticationExpired.detail
+            case .connectivity: return "Connessione assente. Riprova quando sei online."
+            case .serviceUnavailable: return AppFailure.serviceUnavailable.detail
+            case .incompatibleResponse: return AppFailure.incompatibleResponse.detail
+            }
+        case is CredentialStorageError: return AppFailure.credentialUnavailable.detail
+        case is FileStoreError: return "Impossibile accedere ai file del corso. Controlla la cartella e riprova."
+        default: return "Operazione non riuscita. Riprova."
         }
     }
 
@@ -538,13 +635,23 @@ struct MenuBarSnapshot: Sendable {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        // Without this, an accessory (menu-bar-only) app can show the panel without it being key:
-        // it draws on screen but doesn't own keyboard focus, so typing to rename "New Folder"
-        // (or anywhere else in the panel) is silently swallowed. Same root cause as the WebView
-        // login window in `LoginWindowController.showWindow`.
+        // An accessory (menu-bar-only) app can show the panel without it owning keyboard focus, so
+        // typing the name of a "New Folder" (or anywhere else in the panel) is silently swallowed.
+        // Activating alone is not enough on recent macOS: while the panel is open Beepbar runs as a
+        // regular app, then goes back to living in the menu bar.
+        let previousPolicy = NSApp.activationPolicy()
+        if previousPolicy != .regular { NSApp.setActivationPolicy(.regular) }
         NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let selectedURL = url.standardizedFileURL
+        let response = panel.runModal()
+        if previousPolicy != .regular {
+            NSApp.setActivationPolicy(previousPolicy)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        guard response == .OK, let url = panel.url else { return }
+        // Registered by its resolved path, so the same folder reached through a symlink (the folder
+        // itself or a parent) maps to one root instead of losing its baselines to a second record.
+        let pickedURL = url.standardizedFileURL
+        let selectedURL = pickedURL.resolvingSymlinksInPath()
         guard !isSyncActive else { return }
         Task { [weak self] in
             do {
@@ -552,13 +659,17 @@ struct MenuBarSnapshot: Sendable {
                 await self.bootstrapTask?.value
                 guard let database = self.database else { throw SyncDatabaseError.open }
                 _ = try FileStore(root: selectedURL)
-                let selectedID = try await database.rootID(canonicalPath: selectedURL.path) ?? UUID()
+                // A root registered before paths were resolved is still found by the path it was
+                // picked with, and moves to the resolved one.
+                let existingID = try await database.rootID(canonicalPath: selectedURL.path)
+                let legacyID = pickedURL.path == selectedURL.path ? nil : try await database.rootID(canonicalPath: pickedURL.path)
+                let selectedID = existingID ?? legacyID ?? UUID()
                 try await database.registerRoot(id: selectedID, canonicalPath: selectedURL.path)
                 let report = try await operationGate.withLease(.recovering) {
                     try await RecoveryCoordinator(rootID: selectedID, database: database, fileStore: try FileStore(root: selectedURL)).recover()
                 }
                 guard report.unresolved.isEmpty else { throw SyncDatabaseError.execution }
-                rootURL = selectedURL; rootID = selectedID; recoveryBlocked = false
+                rootURL = selectedURL; rootID = selectedID; recoveryBlocked = false; hasPendingModuleMoves = false
                 courseFolders = [:]; conflicts = []
                 await restoreScopes(for: courses)
                 Self.defaults.set(selectedURL.path, forKey: Self.rootKey)
@@ -661,6 +772,14 @@ struct MenuBarSnapshot: Sendable {
                 await self.bootstrapTask?.value
                 try Task.checkCancellation()
                 guard self.activeOperationID == operationID else { return }
+                // The course list is only loaded when the window opens, so a sync started from the
+                // menu right after launch would otherwise find nothing selected and do nothing.
+                if self.courses.isEmpty, self.hasStoredCredential, self.accountState == .connected {
+                    let token = try await self.credentialVault.load()
+                    try await self.refreshCourseList(token: token)
+                    try Task.checkCancellation()
+                    guard self.activeOperationID == operationID else { return }
+                }
                 let selected = self.courses.filter { self.enabledCourseIDs.contains($0.id) }
                 guard !selected.isEmpty else {
                     self.setSyncState(.readyUnchecked)
@@ -675,7 +794,7 @@ struct MenuBarSnapshot: Sendable {
                 }
                 let targets = selected.map { SyncTarget(courseID: $0.id, localFolder: self.folder(for: $0)) }
                 let token = try await self.credentialVault.load()
-                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: self.operationGate, apiClient: self.apiClient, downloader: self.downloader)
+                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: self.operationGate, apiClient: self.apiClient, downloader: self.downloader, platformName: self.selectedSite.platformName)
                 await self.beginTransfer(operationID, automatic: false)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .manual) { [weak self] progress in
                     await self?.publishProgress(progress)
@@ -688,6 +807,8 @@ struct MenuBarSnapshot: Sendable {
             } catch let error as CredentialStorageError {
                 await self?.handleCredentialStorageError(error)
                 self?.endOperation(operationID)
+            } catch is RootOperationGateError {
+                self?.busySync(operationID)
             } catch {
                 await self?.failedSync(operationID, error: nil, automatic: false)
             }
@@ -775,6 +896,15 @@ struct MenuBarSnapshot: Sendable {
         downloader = RemoteDownloader(policy: site.serverPolicy)
         siteInfo = nil
         courses = []
+        // Course ids belong to one site: the previous site's selection must not enable whatever
+        // course happens to share an id on the new one.
+        enabledCourseIDs = []
+        Self.defaults.set([String](), forKey: Self.enabledCoursesKey)
+        if let database, let rootID {
+            let previousWrite = scopeWriteTask
+            scopeWriteTask = Task { await previousWrite?.value; try? await database.disableAllScopes(rootID: rootID) }
+        }
+        configureBackgroundScheduler()
     }
 
     func validateConnection() {
@@ -815,18 +945,7 @@ struct MenuBarSnapshot: Sendable {
                 await self.bootstrapTask?.value
                 try Task.checkCancellation()
                 let token = try await self.credentialVault.load()
-                let siteInfo: WeBeepSiteInfo
-                if let existing = self.siteInfo {
-                    siteInfo = existing
-                } else {
-                    siteInfo = try await self.apiClient.validateToken(token)
-                }
-                let courses = try await self.apiClient.fetchCourses(userID: siteInfo.userID, token: token)
-                self.siteInfo = siteInfo
-                await self.restoreScopes(for: courses)
-                self.courses = Self.orderedForDisplay(courses, enabledCourseIDs: self.enabledCourseIDs)
-                self.accountState = .connected
-                Self.defaults.removeObject(forKey: Self.credentialExpiredKey)
+                try await self.refreshCourseList(token: token)
             } catch let error as WeBeepAPIError {
                 guard let self else { return }
                 if error == .invalidToken {
@@ -842,6 +961,31 @@ struct MenuBarSnapshot: Sendable {
                 self?.courseLoadError = "Impossibile aggiornare i corsi. Riprova."
             }
         }
+    }
+
+    /// Fetches the enrolled courses and makes them the current list. Shared by the course list
+    /// refresh and by a sync started before the list was ever loaded (from the menu right after
+    /// launch), which cannot go through `loadCourses` because that refuses to run during a sync.
+    private func refreshCourseList(token: String) async throws {
+        let courses = try await fetchEnrolledCourses(token: token)
+        // The account may have been disconnected while the list was loading.
+        guard hasStoredCredential else { return }
+        await restoreScopes(for: courses)
+        self.courses = Self.orderedForDisplay(courses, enabledCourseIDs: enabledCourseIDs)
+        accountState = .connected
+        Self.defaults.removeObject(forKey: Self.credentialExpiredKey)
+    }
+
+    private func fetchEnrolledCourses(token: String) async throws -> [RemoteCourseSummary] {
+        let siteInfo: WeBeepSiteInfo
+        if let existing = self.siteInfo {
+            siteInfo = existing
+        } else {
+            siteInfo = try await apiClient.validateToken(token)
+        }
+        let courses = try await apiClient.fetchCourses(userID: siteInfo.userID, token: token)
+        self.siteInfo = siteInfo
+        return courses
     }
 
     private static let onboardingCompletedKey = "io.github.tvaccari.beepbar.onboarding-completed.v1"
@@ -902,7 +1046,7 @@ struct MenuBarSnapshot: Sendable {
 
     private func completeLogin(_ result: Result<URL, LoginWindowError>) {
         loginWindow = nil; isAuthenticating = false
-        siteInfo = nil; courses = []
+        // A cancelled or failed login leaves the current account and its course list untouched.
         guard case let .success(callback) = result, let token = token(from: callback) else {
             status = "Accesso a \(selectedSite.platformName) annullato o callback non valido."; return
         }
@@ -911,6 +1055,8 @@ struct MenuBarSnapshot: Sendable {
                 guard let self else { return }
                 let siteInfo = try await self.apiClient.validateToken(token)
                 try await self.credentialVault.save(token)
+                // Only a token that was accepted and stored replaces the previous account's state.
+                self.courses = []
                 self.siteInfo = siteInfo
                 self.hasStoredCredential = true
                 self.accountState = .connected
@@ -1048,6 +1194,7 @@ struct MenuBarSnapshot: Sendable {
             try await migrator.apply(preview, courseFolder: folder(for: course), token: token)
         } catch {
             if (try? await database.hasPendingModuleMoves(rootID: rootID)) == true {
+                hasPendingModuleMoves = true
                 recoveryBlocked = true
                 setSyncState(.recoveryBlocked)
             }
@@ -1064,6 +1211,7 @@ struct MenuBarSnapshot: Sendable {
             try await migrator.deleteUnavailableRule(courseID: course.id, moduleID: moduleID, token: token)
         } catch {
             if (try? await database.hasPendingModuleMoves(rootID: rootID)) == true {
+                hasPendingModuleMoves = true
                 recoveryBlocked = true
                 setSyncState(.recoveryBlocked)
             }
@@ -1172,27 +1320,32 @@ struct MenuBarSnapshot: Sendable {
             BeepbarLog.sync.notice("Automatic synchronization skipped reason=configuration-unavailable")
             return .finished
         }
-        BeepbarLog.sync.notice("Automatic synchronization started")
         let operationID = UUID()
         activeOperationID = operationID
         automaticOutcome = .finished
-        setSyncState(.checking)
+        // Nothing to check: leave the last result on screen instead of replacing it with "Pronto".
         guard let automaticScopes = try? await database.scopes(rootID: rootID, enabledOnly: true), !automaticScopes.isEmpty else {
             guard activeOperationID == operationID else { return .cancelled }
-            setSyncState(.readyUnchecked)
+            BeepbarLog.sync.notice("Automatic synchronization skipped reason=no-enabled-courses")
             endOperation(operationID)
             return .finished
         }
         guard activeOperationID == operationID else { return .cancelled }
-        let targets = automaticScopes.map { SyncTarget(courseID: $0.courseID, localFolder: $0.localFolder) }
+        BeepbarLog.sync.notice("Automatic synchronization started")
+        setSyncState(.checking)
         let apiClient = self.apiClient
         let downloader = self.downloader
         let gate = operationGate
+        let platformName = selectedSite.platformName
         let task = Task { [weak self] in
             do {
                 guard let self else { return }
                 let token = try await self.credentialVault.load(.nonInteractive)
-                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient, downloader: downloader)
+                // A course stays enabled in the database after the user leaves it; only the courses
+                // the account is still enrolled in are checked.
+                let enrolled = Set(try await self.fetchEnrolledCourses(token: token).map(\.id))
+                let targets = Self.automaticTargets(scopes: automaticScopes, enrolledCourseIDs: enrolled)
+                let coordinator = try SyncCoordinator(rootID: rootID, rootURL: rootURL, database: database, gate: gate, apiClient: apiClient, downloader: downloader, platformName: platformName)
                 await self.beginTransfer(operationID, automatic: true)
                 let summary = try await coordinator.synchronize(targets: targets, token: token, mode: .automatic) { [weak self] progress in
                     await self?.publishProgress(progress)
@@ -1214,6 +1367,11 @@ struct MenuBarSnapshot: Sendable {
         syncTask = task
         await task.value
         return Task.isCancelled ? .cancelled : automaticOutcome
+    }
+
+    nonisolated static func automaticTargets(scopes: [SyncScope], enrolledCourseIDs: Set<Int64>) -> [SyncTarget] {
+        scopes.filter { $0.enabled && enrolledCourseIDs.contains($0.courseID) }
+            .map { SyncTarget(courseID: $0.courseID, localFolder: $0.localFolder) }
     }
 
     private func beginTransfer(_ operationID: UUID, automatic: Bool) async {
@@ -1241,6 +1399,13 @@ struct MenuBarSnapshot: Sendable {
         guard activeOperationID == operationID else { return }
         BeepbarLog.sync.notice("Synchronization cancelled")
         setSyncState(.readyUnchecked)
+        endOperation(operationID)
+    }
+
+    /// A manual sync found the folder busy with a rename, a module move or a conflict being resolved.
+    private func busySync(_ operationID: UUID) {
+        guard activeOperationID == operationID else { return }
+        setSyncState(.failed(.local("Un'altra operazione è in corso sulla cartella. Riprova tra poco.")))
         endOperation(operationID)
     }
 
@@ -1446,14 +1611,14 @@ private enum AutomaticNotificationIssue: String {
         } else {
             let fingerprint = NotificationFingerprint.conflicts(conflicts)
             if deduplication.shouldNotify(condition: "conflicts", fingerprint: fingerprint, now: Date()) {
-                await send(center, title: "Conflitti da risolvere", body: "Beepbar ha conservato separatamente \(conflicts.count) versione/i remota/e.", identifier: "beepbar-conflicts")
+                await send(center, title: conflicts.count == 1 ? "Conflitto da risolvere" : "Conflitti da risolvere", body: SyncCopy.conflictNotificationBody(conflicts.count), identifier: "beepbar-conflicts")
             }
         }
         if failures > 0 {
             await notify(issue: .partialSync)
         } else {
             if installed > 0 {
-                await send(center, title: "Nuovi materiali disponibili", body: "Beepbar ha aggiunto \(installed) materiale/i nella cartella scelta.", identifier: "beepbar-new-files-\(UUID().uuidString)")
+                await send(center, title: installed == 1 ? "Nuovo materiale disponibile" : "Nuovi materiali disponibili", body: SyncCopy.newMaterialsNotificationBody(installed), identifier: "beepbar-new-files-\(UUID().uuidString)")
             }
         }
     }

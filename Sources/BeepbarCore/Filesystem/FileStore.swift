@@ -201,6 +201,24 @@ public actor FileStore {
         guard fsync(sourceParent) == 0, fsync(destinationParent) == 0 else { throw fileStoreError() }
     }
 
+    /// Removes the directories that held `path` while they are empty, deepest first, stopping at the
+    /// first one that still has an entry. The top-level course folder is never removed: its sync
+    /// scope records its identity. `rmdir` only succeeds on an empty directory, so nothing a user
+    /// put there (even a `.DS_Store`) can be lost.
+    public func removeEmptyParentDirectories(of path: RelativePath) throws {
+        try requireMovablePath(path)
+        let components = path.components
+        guard components.count > 2 else { return }
+        for length in stride(from: components.count - 1, through: 2, by: -1) {
+            let parent: Int32
+            do { parent = try directoryFD(for: Array(components.prefix(length - 1)), create: false) }
+            catch { return }
+            defer { close(parent) }
+            guard unlinkat(parent, components[length - 1], AT_REMOVEDIR) == 0 else { return }
+            _ = fsync(parent)
+        }
+    }
+
     /// Returns the subset of `paths` that currently exist as regular files, using one `stat` per path and
     /// never reading file contents. Directories, symbolic links and other non-regular entries, as well as
     /// paths whose parent is missing or is no longer a directory, are reported as absent rather than thrown.

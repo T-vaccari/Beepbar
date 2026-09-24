@@ -23,6 +23,27 @@ struct SyncDatabaseTests {
         }
     }
 
+    @Test func disablingAllScopesKeepsFoldersAndIdentitiesAndOnlyTouchesThatRoot() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = try SyncDatabase(url: root.appending(path: "state.sqlite"))
+        let rootID = UUID()
+        let otherRootID = UUID()
+        try await database.registerRoot(id: rootID, canonicalPath: root.path + "/a")
+        try await database.registerRoot(id: otherRootID, canonicalPath: root.path + "/b")
+        let identity = DirectoryIdentity(device: 1, inode: 2)
+        try await database.upsertScope(SyncScope(rootID: rootID, courseID: 1, displayName: "A", localFolder: "a", enabled: true, managedDirectory: identity))
+        try await database.upsertScope(SyncScope(rootID: otherRootID, courseID: 1, displayName: "A", localFolder: "a", enabled: true))
+
+        try await database.disableAllScopes(rootID: rootID)
+
+        let scope = try #require(await database.scope(rootID: rootID, courseID: 1))
+        #expect(!scope.enabled)
+        #expect(scope.localFolder == "a")
+        #expect(scope.managedDirectory == identity)
+        #expect(try await database.scope(rootID: otherRootID, courseID: 1)?.enabled == true)
+    }
+
     @Test func writeWaitsForABusyDatabaseInsteadOfFailingImmediately() async throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

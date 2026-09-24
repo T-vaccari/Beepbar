@@ -81,6 +81,7 @@ private struct HomePage: View {
     @State private var editingCourseID: Int64?
     @State private var proposedFolder = ""
     @State private var organizingCourse: RemoteCourseSummary?
+    @State private var showAbandonConfirmation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -91,6 +92,12 @@ private struct HomePage: View {
         .padding(20)
         .sheet(item: $organizingCourse) { course in
             ModuleDestinationsSheet(authentication: authentication, course: course)
+        }
+        .confirmationDialog("Abbandonare lo spostamento del modulo?", isPresented: $showAbandonConfirmation, titleVisibility: .visible) {
+            Button("Abbandona spostamento", role: .destructive) { authentication.abandonPendingModuleMoves() }
+            Button("Annulla", role: .cancel) {}
+        } message: {
+            Text("Nessun file viene spostato né eliminato: Beepbar registra dove si trova ogni file e il modulo mantiene la cartella precedente.")
         }
     }
 
@@ -111,6 +118,12 @@ private struct HomePage: View {
                         Button("Dettaglio") { open(.syncDetail) }
                             .buttonStyle(.link)
                             .font(.caption)
+                    }
+                    if authentication.recoveryBlocked && authentication.hasPendingModuleMoves {
+                        Button("Abbandona spostamento…") { showAbandonConfirmation = true }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                            .disabled(authentication.isSyncActive)
                     }
                 }
                 Spacer()
@@ -275,6 +288,7 @@ private struct HomePage: View {
 private struct SettingsPage: View {
     @ObservedObject var authentication: WeBeepAuthenticationController
     let back: () -> Void
+    @State private var showSignOutConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -298,6 +312,10 @@ private struct SettingsPage: View {
                             }
                             Button("Verifica") { authentication.validateConnection() }
                                 .disabled(!authentication.hasStoredCredential || authentication.isVerifying)
+                            if authentication.hasStoredCredential {
+                                Button("Disconnetti…") { showSignOutConfirmation = true }
+                                    .disabled(authentication.isSyncActive || authentication.isLoadingCourses)
+                            }
                         }
                     }.padding(4)
                 }
@@ -338,6 +356,12 @@ private struct SettingsPage: View {
                 }
             }
             .padding(20)
+        }
+        .confirmationDialog("Disconnettere l'account \(authentication.selectedSite.platformName)?", isPresented: $showSignOutConfirmation, titleVisibility: .visible) {
+            Button("Disconnetti", role: .destructive) { authentication.signOut() }
+            Button("Annulla", role: .cancel) {}
+        } message: {
+            Text("Il token salvato viene eliminato da questo Mac. La cartella dei materiali e i file restano dove sono.")
         }
     }
 }
@@ -540,7 +564,7 @@ private struct ModuleDestinationsSheet: View {
         do {
             rows = try await authentication.modulePathRules(for: course)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = WeBeepAuthenticationController.moduleFolderErrorMessage(error)
         }
         isLoading = false
     }
@@ -555,7 +579,7 @@ private struct ModuleDestinationsSheet: View {
                 editingModuleID = nil
             } catch {
                 preview = nil
-                errorMessage = error.localizedDescription
+                errorMessage = WeBeepAuthenticationController.moduleFolderErrorMessage(error)
             }
         }
     }
@@ -572,7 +596,7 @@ private struct ModuleDestinationsSheet: View {
                 await reload()
             } catch {
                 self.preview = nil
-                let message = error.localizedDescription
+                let message = WeBeepAuthenticationController.moduleFolderErrorMessage(error)
                 await reload()
                 errorMessage = message
             }
@@ -589,7 +613,7 @@ private struct ModuleDestinationsSheet: View {
                 try await authentication.deleteUnavailableModuleRule(for: course, moduleID: row.moduleID)
                 await reload()
             } catch {
-                let message = error.localizedDescription
+                let message = WeBeepAuthenticationController.moduleFolderErrorMessage(error)
                 await reload()
                 errorMessage = message
             }
@@ -621,6 +645,15 @@ private struct SyncDetailPage: View {
                 } else {
                     List(summary.affectedCourses) { course in
                         DisclosureGroup {
+                            if let failure = course.courseFailure {
+                                HStack {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .foregroundStyle(.orange)
+                                    Text(failure).font(.callout)
+                                    Spacer()
+                                }
+                                .padding(.vertical, 2)
+                            }
                             ForEach(course.items) { item in
                                 HStack {
                                     Image(systemName: item.kind == .added ? "plus.circle" : "arrow.triangle.2.circlepath")
@@ -648,6 +681,7 @@ private struct SyncDetailPage: View {
                                 Spacer()
                                 if course.added > 0 { Text(course.addedLabel).font(.caption).foregroundStyle(.secondary) }
                                 if course.updated > 0 { Text(course.updatedLabel).font(.caption).foregroundStyle(.secondary) }
+                                if course.courseFailure != nil { Text("non sincronizzato").font(.caption).foregroundStyle(.orange) }
                                 if !course.failedItems.isEmpty { Text("\(course.failedItems.count) non aggiornati").font(.caption).foregroundStyle(.orange) }
                             }
                             .padding(.vertical, 3)

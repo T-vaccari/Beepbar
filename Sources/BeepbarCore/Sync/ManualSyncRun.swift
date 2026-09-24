@@ -45,20 +45,23 @@ public struct CourseSyncCount: Sendable, Equatable, Codable, Identifiable {
     public let updated: Int
     public let items: [SyncedItem]
     public let failedItems: [FailedSyncItem]
+    /// Set when the course's contents could not be read at all, so none of its files were checked.
+    public let courseFailure: String?
 
     public var id: Int64 { courseID }
-    public var total: Int { added + updated + failedItems.count }
+    public var total: Int { added + updated + failedItems.count + (courseFailure == nil ? 0 : 1) }
 
-    public init(courseID: Int64, courseFolder: String, added: Int, updated: Int, items: [SyncedItem] = [], failedItems: [FailedSyncItem] = []) {
+    public init(courseID: Int64, courseFolder: String, added: Int, updated: Int, items: [SyncedItem] = [], failedItems: [FailedSyncItem] = [], courseFailure: String? = nil) {
         self.courseID = courseID
         self.courseFolder = courseFolder
         self.added = added
         self.updated = updated
         self.items = items
         self.failedItems = failedItems
+        self.courseFailure = courseFailure
     }
 
-    private enum CodingKeys: String, CodingKey { case courseID, courseFolder, added, updated, items, failedItems }
+    private enum CodingKeys: String, CodingKey { case courseID, courseFolder, added, updated, items, failedItems, courseFailure }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -68,6 +71,7 @@ public struct CourseSyncCount: Sendable, Equatable, Codable, Identifiable {
         updated = try values.decode(Int.self, forKey: .updated)
         items = try values.decodeIfPresent([SyncedItem].self, forKey: .items) ?? []
         failedItems = try values.decodeIfPresent([FailedSyncItem].self, forKey: .failedItems) ?? []
+        courseFailure = try values.decodeIfPresent(String.self, forKey: .courseFailure)
     }
 }
 
@@ -83,6 +87,15 @@ public struct SyncProgress: Sendable, Equatable {
     public let perCourse: [CourseSyncCount]
 
     public var installed: Int { added + updated }
+    /// Courses whose contents could not be read; each one also counts as one failure.
+    public var failedCourses: Int { perCourse.filter { $0.courseFailure != nil }.count }
+
+    /// The same run with `failures` courses that could not be read at all folded in.
+    func addingCourseFailures(_ failures: [CourseSyncCount]) -> SyncProgress {
+        guard !failures.isEmpty else { return self }
+        let merged = (perCourse + failures).sorted { $0.courseFolder.localizedStandardCompare($1.courseFolder) == .orderedAscending }
+        return SyncProgress(completed: completed, total: total, added: added, updated: updated, preservedLocal: preservedLocal, unchanged: unchanged, conflicts: conflicts, failures: self.failures + failures.count, perCourse: merged)
+    }
 
     public init(completed: Int, total: Int, added: Int, updated: Int, preservedLocal: Int, unchanged: Int, conflicts: Int, failures: Int, perCourse: [CourseSyncCount] = []) {
         self.completed = completed

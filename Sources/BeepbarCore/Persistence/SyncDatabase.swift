@@ -280,6 +280,37 @@ public actor SyncDatabase {
         } catch { try? execute("ROLLBACK"); throw error }
     }
 
+    /// Drops a module move that cannot be completed, recording where each tracked file really is.
+    ///
+    /// `actualPaths` maps a remote id to the path its file was found at, or to `nil` when the file
+    /// is at neither end of the move: that baseline is dropped so the next sync treats the file as
+    /// new and never overwrites whatever now sits at either path. The module's folder rule is left
+    /// as it was before the move, because only a committed move changes it.
+    public func abandonModuleMove(_ move: PendingModuleMove, actualPaths: [String: RelativePath?]) throws {
+        try execute("BEGIN IMMEDIATE")
+        do {
+            for file in move.files {
+                guard let actual = actualPaths[file.remoteID] else { continue }
+                if let actual {
+                    guard actual != file.oldPath else { continue }
+                    try withStatement("UPDATE items SET relative_path = ? WHERE root_id = ? AND remote_id = ? AND relative_path = ?") { statement in
+                        try bind(actual.value, to: statement, index: 1); try bind(move.rootID.uuidString, to: statement, index: 2)
+                        try bind(file.remoteID, to: statement, index: 3); try bind(file.oldPath.value, to: statement, index: 4)
+                        try stepDone(statement)
+                    }
+                } else {
+                    try withStatement("DELETE FROM items WHERE root_id = ? AND remote_id = ? AND relative_path = ?") { statement in
+                        try bind(move.rootID.uuidString, to: statement, index: 1); try bind(file.remoteID, to: statement, index: 2)
+                        try bind(file.oldPath.value, to: statement, index: 3)
+                        try stepDone(statement)
+                    }
+                }
+            }
+            try withStatement("DELETE FROM pending_module_moves WHERE id = ?") { statement in try bind(move.id.uuidString, to: statement, index: 1); try stepDone(statement) }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
+
     private func pendingModuleMoveFiles(id: UUID) throws -> [PendingModuleMoveFile] {
         try withStatement("SELECT remote_id, old_path, new_path, source_kind, source_device, source_inode, source_sha256 FROM pending_module_move_files WHERE move_id = ? ORDER BY remote_id") { statement in
             try bind(id.uuidString, to: statement, index: 1)
@@ -312,6 +343,16 @@ public actor SyncDatabase {
                 guard sqlite3_bind_int64(statement, 7, identity.device) == SQLITE_OK,
                       sqlite3_bind_int64(statement, 8, Int64(bitPattern: identity.inode)) == SQLITE_OK else { throw SyncDatabaseError.execution }
             } else { sqlite3_bind_null(statement, 7); sqlite3_bind_null(statement, 8) }
+            try stepDone(statement)
+        }
+    }
+
+    /// Turns every course of the root off, keeping folders and directory identities. Used when the
+    /// account moves to another Moodle site: course ids are only unique within one site, so the old
+    /// site's selection must never be read as a selection of the new site's courses.
+    public func disableAllScopes(rootID: UUID) throws {
+        try withStatement("UPDATE sync_scopes SET enabled = 0 WHERE root_id = ?") { statement in
+            try bind(rootID.uuidString, to: statement, index: 1)
             try stepDone(statement)
         }
     }
