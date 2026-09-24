@@ -13,6 +13,12 @@
 		A10000000000000000000009 /* UpdaterController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* UpdaterController.swift */; };
 		A10000000000000000000090 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000091 /* OnboardingView.swift */; };
 		A10000000000000000000092 /* CredentialStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000093 /* CredentialStorage.swift */; };
+		A100000000000000000000A0 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A1 /* DesignSystem.swift */; };
+		A100000000000000000000A2 /* HomePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A3 /* HomePage.swift */; };
+		A100000000000000000000A4 /* SettingsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A5 /* SettingsPage.swift */; };
+		A100000000000000000000A6 /* ConflictsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A7 /* ConflictsPage.swift */; };
+		A100000000000000000000A8 /* ActivityPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A9 /* ActivityPage.swift */; };
+		A100000000000000000000AA /* ModuleDestinationsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000AB /* ModuleDestinationsSheet.swift */; };
 		A10000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* Assets.xcassets */; };
 		A10000000000000000000003 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000021 /* WebKit.framework */; };
 		A10000000000000000000005 /* BeepbarCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000040 /* BeepbarCore */; };
@@ -27,6 +33,12 @@
 		A10000000000000000000017 /* UpdaterController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdaterController.swift; sourceTree = "<group>"; };
 		A10000000000000000000091 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		A10000000000000000000093 /* CredentialStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStorage.swift; sourceTree = "<group>"; };
+		A100000000000000000000A1 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		A100000000000000000000A3 /* HomePage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomePage.swift; sourceTree = "<group>"; };
+		A100000000000000000000A5 /* SettingsPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPage.swift; sourceTree = "<group>"; };
+		A100000000000000000000A7 /* ConflictsPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConflictsPage.swift; sourceTree = "<group>"; };
+		A100000000000000000000A9 /* ActivityPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityPage.swift; sourceTree = "<group>"; };
+		A100000000000000000000AB /* ModuleDestinationsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModuleDestinationsSheet.swift; sourceTree = "<group>"; };
 		A10000000000000000000013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10000000000000000000015 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -77,6 +89,12 @@
 				A10000000000000000000017 /* UpdaterController.swift */,
 				A10000000000000000000091 /* OnboardingView.swift */,
 				A10000000000000000000093 /* CredentialStorage.swift */,
+				A100000000000000000000A1 /* DesignSystem.swift */,
+				A100000000000000000000A3 /* HomePage.swift */,
+				A100000000000000000000A5 /* SettingsPage.swift */,
+				A100000000000000000000A7 /* ConflictsPage.swift */,
+				A100000000000000000000A9 /* ActivityPage.swift */,
+				A100000000000000000000AB /* ModuleDestinationsSheet.swift */,
 			);
 			name = Sources;
 			path = Sources/BeepbarApp;
@@ -173,6 +191,12 @@
 				A10000000000000000000009 /* UpdaterController.swift in Sources */,
 				A10000000000000000000090 /* OnboardingView.swift in Sources */,
 				A10000000000000000000092 /* CredentialStorage.swift in Sources */,
+				A100000000000000000000A0 /* DesignSystem.swift in Sources */,
+				A100000000000000000000A2 /* HomePage.swift in Sources */,
+				A100000000000000000000A4 /* SettingsPage.swift in Sources */,
+				A100000000000000000000A6 /* ConflictsPage.swift in Sources */,
+				A100000000000000000000A8 /* ActivityPage.swift in Sources */,
+				A100000000000000000000AA /* ModuleDestinationsSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

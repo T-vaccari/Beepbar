@@ -4,12 +4,13 @@ import BeepbarCore
 struct OnboardingView: View {
     @ObservedObject var authentication: WeBeepAuthenticationController
     @State private var step: Step = .welcome
+    @State private var movingForward = true
 
     private enum Step: Int, CaseIterable { case welcome, folder, wrapUp }
 
     var body: some View {
         VStack(spacing: 0) {
-            Spacer()
+            Spacer(minLength: 16)
             Group {
                 switch step {
                 case .welcome: welcomeStep
@@ -17,48 +18,69 @@ struct OnboardingView: View {
                 case .wrapUp: wrapUpStep
                 }
             }
-            .frame(maxWidth: 420)
-            Spacer()
+            .frame(maxWidth: 440)
+            .id(step)
+            .transition(.asymmetric(
+                insertion: .move(edge: movingForward ? .trailing : .leading).combined(with: .opacity),
+                removal: .move(edge: movingForward ? .leading : .trailing).combined(with: .opacity)
+            ))
+            Spacer(minLength: 16)
             footer
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func hero(_ systemImage: String) -> some View {
+        SymbolTile(systemImage: systemImage, size: 72)
+            .shadow(color: .accentColor.opacity(0.35), radius: 14, y: 6)
+            .padding(.bottom, 4)
     }
 
     private var welcomeStep: some View {
         VStack(spacing: 14) {
-            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
-                .font(.system(size: 46))
-                .foregroundStyle(.tint)
-            Text("Benvenuto in Beepbar").font(.title.weight(.semibold))
+            BeepbarLogo(size: 88)
+                .shadow(color: .blue.opacity(0.35), radius: 16, y: 8)
+                .padding(.bottom, 4)
+            Text("Benvenuto in Beepbar").font(.largeTitle.weight(.bold))
             Text("Sincronizza in sicurezza i materiali universitari sul tuo Mac.")
+                .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            VStack(alignment: .leading, spacing: 10) {
-                onboardingPoint(systemImage: "lock.shield", text: "Non sovrascrive mai il tuo lavoro: se modifichi un file in locale, quella copia resta intoccata.")
-                onboardingPoint(systemImage: "clock.arrow.circlepath", text: "Controlla i nuovi materiali in background, con la frequenza che scegli tu.")
-                onboardingPoint(systemImage: "bolt.fill", text: "Nativo e leggero: vive nella barra dei menu, senza appesantire il Mac.")
+            VStack(alignment: .leading, spacing: 14) {
+                onboardingPoint(systemImage: "lock.shield.fill", tint: .green, text: "Non sovrascrive mai il tuo lavoro: se modifichi un file in locale, quella copia resta intoccata.")
+                onboardingPoint(systemImage: "clock.arrow.circlepath", tint: .blue, text: "Controlla i nuovi materiali in background, con la frequenza che scegli tu.")
+                onboardingPoint(systemImage: "bolt.fill", tint: .orange, text: "Nativo e leggero: vive nella barra dei menu, senza appesantire il Mac.")
             }
-            .padding(.top, 6)
+            .card(padding: 18)
+            .padding(.top, 10)
         }
     }
 
     private var folderStep: some View {
         VStack(spacing: 14) {
-            Image(systemName: "folder.fill.badge.gearshape")
-                .font(.system(size: 46))
-                .foregroundStyle(.tint)
-            Text("Scegli la cartella dei materiali").font(.title2.weight(.semibold))
-            Text("Beepbar creerà qui dentro una sottocartella per ogni corso che abiliterai.")
+            hero("folder.fill.badge.gearshape")
+            Text("Scegli la cartella dei materiali").font(.title.weight(.bold))
+            Text("Qui dentro verrà creata una sottocartella per ogni corso che abiliterai.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             if let rootURL = authentication.rootURL {
-                Label(rootURL.path, systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.callout)
-                    .textSelection(.enabled)
-                    .lineLimit(2)
-                    .padding(.top, 4)
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.title3)
+                    Text((rootURL.path as NSString).abbreviatingWithTildeInPath)
+                        .font(.callout)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 0)
+                }
+                .card(padding: 12)
+                .padding(.top, 4)
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
             Button(authentication.rootURL == nil ? "Scegli cartella…" : "Cambia cartella…") {
                 authentication.chooseRoot()
@@ -74,53 +96,56 @@ struct OnboardingView: View {
             Text("Nessun problema, potrai cambiarla in qualsiasi momento da Impostazioni.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+        .animation(BeepbarStyle.snappy, value: authentication.rootURL)
     }
 
     private var wrapUpStep: some View {
         VStack(spacing: 14) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 46))
-                .foregroundStyle(.tint)
-            Text("Ci siamo quasi").font(.title2.weight(.semibold))
+            hero("checkmark.seal.fill")
+            Text("Ci siamo quasi").font(.title.weight(.bold))
             accountBox
-            VStack(alignment: .leading, spacing: 10) {
-                onboardingPoint(systemImage: "arrow.triangle.2.circlepath", text: "Frequenza del controllo automatico e aggiornamenti dell'app: sempre modificabili da Impostazioni.")
-                onboardingPoint(systemImage: "exclamationmark.triangle", text: "Se un file cambia sia sul tuo Mac sia su \(authentication.selectedSite.platformName), lo trovi nella sezione Conflitti: decidi tu quale versione tenere.")
+            VStack(alignment: .leading, spacing: 14) {
+                onboardingPoint(systemImage: "slider.horizontal.3", tint: .blue, text: "Frequenza del controllo automatico e aggiornamenti dell'app: sempre modificabili da Impostazioni.")
+                onboardingPoint(systemImage: "exclamationmark.triangle.fill", tint: .orange, text: "Se un file cambia sia sul tuo Mac sia su \(authentication.selectedSite.platformName), lo trovi nella sezione Conflitti: decidi tu quale versione tenere.")
             }
+            .padding(.top, 6)
         }
     }
 
     private var accountBox: some View {
-        GroupBox {
-            VStack(spacing: 12) {
-                if !authentication.hasStoredCredential {
-                    MoodleSitePicker(authentication: authentication)
+        VStack(spacing: 12) {
+            if !authentication.hasStoredCredential {
+                MoodleSitePicker(authentication: authentication)
+            }
+            HStack(spacing: 12) {
+                SymbolTile(
+                    systemImage: authentication.hasStoredCredential ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.plus",
+                    tint: authentication.hasStoredCredential ? .green : .accentColor,
+                    size: 34
+                )
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Accedi a \(authentication.selectedSite.displayName)").font(.callout.weight(.medium))
+                    Text(authentication.hasStoredCredential ? "Account collegato." : "Necessario per iniziare a sincronizzare i corsi.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Accedi a \(authentication.selectedSite.displayName)").font(.callout.weight(.medium))
-                        Text(authentication.hasStoredCredential ? "Account collegato." : "Necessario per iniziare a sincronizzare i corsi.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if authentication.hasStoredCredential {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    } else {
-                        Button("Accedi…") { authentication.startLogin() }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(authentication.isAuthenticating)
-                    }
+                Spacer()
+                if authentication.hasStoredCredential {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.green)
+                } else {
+                    Button("Accedi…") { authentication.startLogin() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(authentication.isAuthenticating)
                 }
             }
-            .padding(6)
         }
+        .card()
     }
 
-    private func onboardingPoint(systemImage: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: systemImage)
-                .foregroundStyle(.tint)
-                .frame(width: 20)
+    private func onboardingPoint(systemImage: String, tint: Color, text: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            SymbolTile(systemImage: systemImage, tint: tint, size: 28, filled: false)
             Text(text)
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
@@ -128,31 +153,39 @@ struct OnboardingView: View {
     }
 
     private var footer: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
             HStack(spacing: 6) {
                 ForEach(Step.allCases, id: \.self) { candidate in
-                    Circle()
+                    Capsule()
                         .fill(candidate == step ? Color.accentColor : Color.secondary.opacity(0.3))
-                        .frame(width: 6, height: 6)
+                        .frame(width: candidate == step ? 18 : 6, height: 6)
                 }
             }
             HStack {
                 if step != .welcome {
-                    Button("Indietro") { step = Step(rawValue: step.rawValue - 1) ?? .welcome }
+                    Button("Indietro") { go(to: Step(rawValue: step.rawValue - 1) ?? .welcome) }
+                        .controlSize(.large)
                 }
                 Spacer()
                 if step == .wrapUp {
+                    // Not the default action: Return must not skip past the sign-in above.
                     Button("Inizia a usare Beepbar") { authentication.completeOnboarding() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                 } else {
-                    Button("Continua") { step = Step(rawValue: step.rawValue + 1) ?? .wrapUp }
+                    Button("Continua") { go(to: Step(rawValue: step.rawValue + 1) ?? .wrapUp) }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
+                        .keyboardShortcut(.defaultAction)
                         .disabled(step == .folder && authentication.rootURL == nil)
                 }
             }
         }
+    }
+
+    private func go(to target: Step) {
+        movingForward = target.rawValue > step.rawValue
+        withAnimation(BeepbarStyle.snappy) { step = target }
     }
 }
 

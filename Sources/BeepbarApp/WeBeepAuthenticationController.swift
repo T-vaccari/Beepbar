@@ -27,6 +27,18 @@ enum AppFailure: Equatable {
         }
     }
 
+    var compactDetail: String {
+        switch self {
+        case .authenticationExpired: "Accedi di nuovo"
+        case .connectivity: "Nessuna connessione"
+        case .serviceUnavailable: "Piattaforma non raggiungibile"
+        case .incompatibleResponse: "Risposta inattesa, riprova più tardi"
+        case .credentialUnavailable: "Credenziale non leggibile"
+        case .partialSync: "Alcuni materiali non aggiornati"
+        case .local: "Apri Beepbar per i dettagli"
+        }
+    }
+
     var detail: String {
         switch self {
         case .authenticationExpired: "Accedi di nuovo per riprendere la sincronizzazione."
@@ -149,6 +161,14 @@ struct SyncCompletionSummary: Codable, Equatable {
             activity = "\(addedPart) · \(updatedPart)."
         }
         return activity + preservedSuffix
+    }
+
+    /// "+12 nuovi · 4 aggiornati" — for places with room for a few words only.
+    var compactDetail: String {
+        var parts: [String] = []
+        if added > 0 { parts.append(added == 1 ? "1 nuovo" : "\(added) nuovi") }
+        if updated > 0 { parts.append(updated == 1 ? "1 aggiornato" : "\(updated) aggiornati") }
+        return parts.isEmpty ? "Nessuna novità" : parts.joined(separator: " · ")
     }
 
     var conflictDetail: String { detail + " Apri Conflitti per scegliere quale versione mantenere." }
@@ -527,14 +547,27 @@ struct MenuBarSnapshot: Sendable {
     private func refreshMenuBarSnapshot() {
         menuBarSnapshot = MenuBarSnapshot(
             title: menuBarTitle,
-            detail: syncDetail,
+            detail: menuBarDetail,
             actionTitle: menuBarActionTitle
         )
     }
 
-    var syncDetail: String {
-        guard case .syncing = syncState else { return syncState.detail }
-        return Self.progressDetail(progressStore.progress) ?? syncState.detail
+    /// One short line for the status menu; the full sentences live in the window.
+    private var menuBarDetail: String {
+        switch syncState {
+        case .starting: "Preparazione…"
+        case .loginRequired: "Collega il tuo account"
+        case .needsFolder: "Scegli la cartella dei materiali"
+        case .readyUnchecked: "Nessun controllo eseguito"
+        case .checking: "Verifica delle novità…"
+        case .syncing: Self.progressDetail(progressStore.progress) ?? "In corso…"
+        case .cancelling: "Attendi…"
+        case .synced(let summary): summary.compactDetail
+        case .conflicts: "Scegli quale versione tenere"
+        case .partial: "Alcuni materiali non aggiornati"
+        case .failed(let failure): failure.compactDetail
+        case .recoveryBlocked: "Recupero locale non completato"
+        }
     }
 
     nonisolated static func progressDetail(_ progress: SyncProgress) -> String? {
@@ -609,7 +642,7 @@ struct MenuBarSnapshot: Sendable {
     func performMenuBarAction() {
         switch menuBarAction {
         case .cancelSync: cancelSynchronization()
-        case .openConflicts: ConflictWindowController.shared.show(self)
+        case .openConflicts: ConfigurationWindowController.shared.show(self, page: .conflicts)
         case .signIn: startLogin()
         case .retryCredentialStorage: validateConnection()
         case .retryRecovery: retryRecovery()
@@ -758,6 +791,7 @@ struct MenuBarSnapshot: Sendable {
 #if DEBUG
         if Self.isUIPreview {
             courses = Self.orderedForDisplay(courses, enabledCourseIDs: enabledCourseIDs)
+            simulatePreviewSync()
             return
         }
 #endif
@@ -814,6 +848,35 @@ struct MenuBarSnapshot: Sendable {
             }
         }
     }
+
+#if DEBUG
+    /// `--ui-preview` only: a few seconds of fake progress so the sync UI (progress line,
+    /// Annulla, menu bar detail, last-sync time) can be exercised without network or files.
+    private func simulatePreviewSync() {
+        guard activeOperationID == nil else { return }
+        let previous = lastSyncSummary
+        activeOperationID = UUID()
+        setSyncState(.syncing)
+        syncTask = Task { [weak self] in
+            guard let self else { return }
+            await self.progressStore.reset(automatic: false)
+            let total = 40
+            for completed in 1...total {
+                try? await Task.sleep(for: .milliseconds(90))
+                if Task.isCancelled { break }
+                await self.publishProgress(SyncProgress(completed: completed, total: total, added: completed / 8, updated: completed / 20, preservedLocal: 0, unchanged: completed, conflicts: 0, failures: 0))
+            }
+            let cancelled = Task.isCancelled
+            self.syncTask = nil
+            self.activeOperationID = nil
+            if cancelled, let previous {
+                self.setSyncState(.synced(previous))
+            } else {
+                self.setSyncState(.synced(SyncCompletionSummary(completedAt: Date(), added: 5, updated: 2, unchanged: 93, preservedLocal: 0, conflicts: 0, failures: 0, perCourse: previous?.perCourse ?? [])))
+            }
+        }
+    }
+#endif
 
     func cancelSynchronization() {
         guard let operationID = activeOperationID else { return }
@@ -1736,7 +1799,7 @@ private enum AutomaticSyncOutcome {
         // Without this, an accessory (menu-bar-only) app can leave the window visible but not
         // key: it draws on screen but doesn't actually own keyboard focus, so the WebView's
         // fields silently reject typing and pasting.
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
         webView.load(URLRequest(url: site.loginURL))
     }
