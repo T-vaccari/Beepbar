@@ -16,9 +16,12 @@ struct ConflictResolverTests {
     @Test func usesRemoteOnlyWhenLocalIsUnchanged() async throws {
         let fixture = try await conflictFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try await fixture.database.upsertBaseline(rootID: fixture.rootID, baseline: Baseline(remoteID: fixture.conflict.remoteID, relativePath: fixture.conflict.relativePath, sha256: "old-base", remoteRevision: "1", courseID: 12, moduleID: 34))
         #expect(try await fixture.resolver.useRemote(id: fixture.conflict.id) == .installedReplacing)
         #expect(try String(contentsOf: fixture.destination, encoding: .utf8) == "remote")
         #expect(try await fixture.database.conflicts(rootID: fixture.rootID).isEmpty)
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: fixture.conflict.remoteID)?.courseID == 12)
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: fixture.conflict.remoteID)?.moduleID == 34)
     }
 
     @Test func usesRemoteAfterAnotherLocalEditLeavesExactlyOneOpenConflict() async throws {

@@ -61,6 +61,52 @@ struct SyncDatabaseTests {
         #expect(try await reopened.baselines(rootID: rootID) == ["file": baseline])
     }
 
+    @Test func reopeningClearsPartiallyAttributedModuleOwners() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "state.sqlite")
+        let rootID = UUID()
+        let database = try SyncDatabase(url: url)
+        try await database.registerRoot(id: rootID, canonicalPath: root.path)
+        for remoteID in ["course-only", "module-only"] {
+            try await database.upsertBaseline(rootID: rootID, baseline: Baseline(remoteID: remoteID, relativePath: try RelativePath("Course/\(remoteID).txt"), sha256: "hash", remoteRevision: "1", courseID: 3, moduleID: 4))
+        }
+        try RawSQLite(url: url).execute("PRAGMA ignore_check_constraints = ON; UPDATE items SET module_id = NULL WHERE remote_id = 'course-only'; UPDATE items SET course_id = NULL WHERE remote_id = 'module-only'")
+
+        let reopened = try SyncDatabase(url: url)
+        let baselines = try await reopened.baselines(rootID: rootID)
+
+        #expect(baselines["course-only"]?.courseID == nil && baselines["course-only"]?.moduleID == nil)
+        #expect(baselines["module-only"]?.courseID == nil && baselines["module-only"]?.moduleID == nil)
+    }
+
+    @Test func ownershipBackfillSkipsAmbiguousRemoteIDs() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rootID = UUID()
+        let database = try SyncDatabase(url: root.appending(path: "state.sqlite"))
+        try await database.registerRoot(id: rootID, canonicalPath: root.path)
+        try await database.upsertBaseline(rootID: rootID, baseline: Baseline(remoteID: "shared", relativePath: try RelativePath("Course/shared.txt"), sha256: "hash", remoteRevision: "1"))
+        let files = [
+            RemoteFileCandidate(id: "shared", courseID: 1, sectionID: 1, moduleID: 10, sectionName: "S", moduleName: "A", filename: "a.txt", remoteFilePath: "/", canonicalPluginPath: "/a", downloadURL: nil, size: 1, modifiedAt: nil, observedRevision: "1", isSupported: true),
+            RemoteFileCandidate(id: "shared", courseID: 1, sectionID: 1, moduleID: 11, sectionName: "S", moduleName: "B", filename: "b.txt", remoteFilePath: "/", canonicalPluginPath: "/b", downloadURL: nil, size: 1, modifiedAt: nil, observedRevision: "1", isSupported: true),
+        ]
+
+        try await database.backfillModuleOwnership(rootID: rootID, files: files)
+
+        #expect(try await database.baseline(rootID: rootID, remoteID: "shared")?.courseID == nil)
+        #expect(try await database.baseline(rootID: rootID, remoteID: "shared")?.moduleID == nil)
+    }
+
+    @Test func syncRejectsDuplicateRemoteIDsBeforePlanning() throws {
+        let files = [
+            RemoteFileCandidate(id: "shared", courseID: 1, sectionID: 1, moduleID: 10, sectionName: "S", moduleName: "A", filename: "a.txt", remoteFilePath: "/", canonicalPluginPath: "/a", downloadURL: nil, size: 1, modifiedAt: nil, observedRevision: "1", isSupported: true),
+            RemoteFileCandidate(id: "shared", courseID: 1, sectionID: 1, moduleID: 11, sectionName: "S", moduleName: "B", filename: "b.txt", remoteFilePath: "/", canonicalPluginPath: "/b", downloadURL: nil, size: 1, modifiedAt: nil, observedRevision: "1", isSupported: true),
+        ]
+
+        #expect(throws: SyncDatabaseError.execution) { try SyncCoordinator.validateUniqueRemoteIDs(files) }
+    }
+
     @Test func conflictsTableIsIndexedForOpenConflictLookups() throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

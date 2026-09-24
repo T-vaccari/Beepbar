@@ -51,6 +51,7 @@ public actor SyncCoordinator {
 
     private func synchronizeWithinLease(targets: [SyncTarget], token: String, mode: SyncCoordinatorMode, progress: @escaping @Sendable (SyncProgress) async -> Void) async throws -> SyncProgress {
         try Task.checkCancellation()
+        guard try await database.hasPendingModuleMoves(rootID: rootID) == false else { throw SyncDatabaseError.execution }
         guard !targets.isEmpty else { return SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0) }
         try await ensureManagedDirectories(targets)
         let baselines: [String: Baseline]
@@ -115,9 +116,23 @@ public actor SyncCoordinator {
                 fetched.append(result)
                 if next < targets.count { enqueue(next); next += 1 }
             }
-            var currentBaselines = baselines
+            let allFiles = fetched.flatMap { $0.1 }
+            try Self.validateUniqueRemoteIDs(allFiles)
+            try await database.backfillModuleOwnership(rootID: rootID, files: allFiles)
+            var currentBaselines = try await database.baselines(rootID: rootID)
+            for file in allFiles {
+                guard let baseline = currentBaselines[file.id] else { continue }
+                guard (baseline.courseID == nil && baseline.moduleID == nil)
+                        || (baseline.courseID == file.courseID && baseline.moduleID == file.moduleID) else {
+                    throw SyncDatabaseError.execution
+                }
+            }
             var deferredIDs: Set<String> = []
             var deferredLegacyIDs: Set<String> = []
+            var overridesByCourse: [Int64: [Int64: ModulePathOverride]] = [:]
+            for target in targets {
+                overridesByCourse[target.courseID] = try await database.modulePathOverrides(rootID: rootID, courseID: target.courseID)
+            }
             for (index, files) in fetched.sorted(by: { $0.0 < $1.0 }) {
                 for file in files where currentBaselines[file.id] == nil {
                     let preferred = try LocalPathPolicy.destination(courseFolder: targets[index].localFolder, file: file)
@@ -125,7 +140,7 @@ public actor SyncCoordinator {
                         baseline.relativePath == preferred && Self.isLegacyRemoteID(remoteID, for: file) ? remoteID : nil
                     }
                     guard legacyIDs.count == 1, let legacyID = legacyIDs.first else { continue }
-                    guard let migrated = try await database.migrateLegacyBaseline(rootID: rootID, legacyRemoteID: legacyID, remoteID: file.id) else {
+                    guard let migrated = try await database.migrateLegacyBaseline(rootID: rootID, legacyRemoteID: legacyID, remoteID: file.id, courseID: file.courseID, moduleID: file.moduleID) else {
                         deferredIDs.insert(file.id)
                         deferredLegacyIDs.insert(legacyID)
                         continue
@@ -133,6 +148,9 @@ public actor SyncCoordinator {
                     currentBaselines.removeValue(forKey: legacyID)
                     currentBaselines[file.id] = migrated
                 }
+            }
+            for file in allFiles where !file.moduleName.isEmpty && overridesByCourse[file.courseID]?[file.moduleID] != nil {
+                try await database.updateModulePathOverrideName(rootID: rootID, courseID: file.courseID, moduleID: file.moduleID, name: file.moduleName)
             }
             var items: [PreparedSyncItem] = []
             // A baseline still claimed by a remote item owns its path whether or not the local file
@@ -158,7 +176,8 @@ public actor SyncCoordinator {
                     if let baseline = currentBaselines[file.id] {
                         destination = baseline.relativePath
                     } else {
-                        let preferred = try LocalPathPolicy.destination(courseFolder: targets[index].localFolder, file: file)
+                        let override = overridesByCourse[file.courseID]?[file.moduleID]?.localFolder
+                        let preferred = try LocalPathPolicy.destination(courseFolder: targets[index].localFolder, file: file, moduleFolderOverride: override)
                         destination = try LocalPathPolicy.uniqueDestination(preferred, reserving: &reservedPaths)
                     }
                     items.append(PreparedSyncItem(remote: file, destination: destination))
@@ -178,11 +197,15 @@ public actor SyncCoordinator {
     }
 
     private func validateNoDestinationCollisions(_ items: [PreparedSyncItem]) throws {
-        var identifiersByPath: [String: Set<String>] = [:]
+        var identifiersByPath: [String: [String]] = [:]
         for item in items {
-            identifiersByPath[Self.pathKey(item.destination), default: []].insert(item.remote.id)
+            identifiersByPath[Self.pathKey(item.destination), default: []].append(item.remote.id)
         }
         guard identifiersByPath.values.allSatisfy({ $0.count == 1 }) else { throw SyncDatabaseError.execution }
+    }
+
+    static func validateUniqueRemoteIDs(_ files: [RemoteFileCandidate]) throws {
+        guard Set(files.map(\.id)).count == files.count else { throw SyncDatabaseError.execution }
     }
 
     private static func pathKey(_ path: RelativePath) -> String {

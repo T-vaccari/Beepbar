@@ -69,17 +69,17 @@ public actor SyncDatabase {
     }
 
     public func baseline(rootID: UUID, remoteID: String) throws -> Baseline? {
-        try withStatement("SELECT relative_path, base_sha256, remote_revision FROM items WHERE root_id = ? AND remote_id = ?") { statement in
+        try withStatement("SELECT relative_path, base_sha256, remote_revision, course_id, module_id FROM items WHERE root_id = ? AND remote_id = ?") { statement in
             try bind(rootID.uuidString, to: statement, index: 1)
             try bind(remoteID, to: statement, index: 2)
             guard try stepRow(statement) else { return nil }
             guard let pathText = sqlite3_column_text(statement, 0), let hashText = sqlite3_column_text(statement, 1), let revisionText = sqlite3_column_text(statement, 2) else { throw SyncDatabaseError.execution }
             let path = try RelativePath(String(cString: pathText))
-            return Baseline(remoteID: remoteID, relativePath: path, sha256: String(cString: hashText), remoteRevision: String(cString: revisionText))
+            return Baseline(remoteID: remoteID, relativePath: path, sha256: String(cString: hashText), remoteRevision: String(cString: revisionText), courseID: optionalInt64(statement, 3), moduleID: optionalInt64(statement, 4))
         }
     }
 
-    public func migrateLegacyBaseline(rootID: UUID, legacyRemoteID: String, remoteID: String) throws -> Baseline? {
+    public func migrateLegacyBaseline(rootID: UUID, legacyRemoteID: String, remoteID: String, courseID: Int64, moduleID: Int64) throws -> Baseline? {
         try execute("BEGIN IMMEDIATE")
         do {
             guard try baseline(rootID: rootID, remoteID: remoteID) == nil,
@@ -91,15 +91,16 @@ public actor SyncDatabase {
                 try execute("COMMIT")
                 return nil
             }
-            try withStatement("UPDATE items SET remote_id = ?, last_seen_at = ? WHERE root_id = ? AND remote_id = ?") { statement in
+            try withStatement("UPDATE items SET remote_id = ?, last_seen_at = ?, course_id = ?, module_id = ? WHERE root_id = ? AND remote_id = ?") { statement in
                 try bind(remoteID, to: statement, index: 1)
                 sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
-                try bind(rootID.uuidString, to: statement, index: 3)
-                try bind(legacyRemoteID, to: statement, index: 4)
+                guard sqlite3_bind_int64(statement, 3, courseID) == SQLITE_OK, sqlite3_bind_int64(statement, 4, moduleID) == SQLITE_OK else { throw SyncDatabaseError.execution }
+                try bind(rootID.uuidString, to: statement, index: 5)
+                try bind(legacyRemoteID, to: statement, index: 6)
                 try stepDone(statement)
             }
             try execute("COMMIT")
-            return Baseline(remoteID: remoteID, relativePath: legacy.relativePath, sha256: legacy.sha256, remoteRevision: legacy.remoteRevision)
+            return Baseline(remoteID: remoteID, relativePath: legacy.relativePath, sha256: legacy.sha256, remoteRevision: legacy.remoteRevision, courseID: courseID, moduleID: moduleID)
         } catch {
             try? execute("ROLLBACK")
             throw error
@@ -107,26 +108,195 @@ public actor SyncDatabase {
     }
 
     public func baselines(rootID: UUID) throws -> [String: Baseline] {
-        try withStatement("SELECT remote_id, relative_path, base_sha256, remote_revision FROM items WHERE root_id = ?") { statement in
+        try withStatement("SELECT remote_id, relative_path, base_sha256, remote_revision, course_id, module_id FROM items WHERE root_id = ?") { statement in
             try bind(rootID.uuidString, to: statement, index: 1)
             var values: [String: Baseline] = [:]
             while try stepRow(statement) {
                 guard let remoteID = text(statement, 0), let pathText = text(statement, 1), let hashText = text(statement, 2), let revisionText = text(statement, 3) else { throw SyncDatabaseError.execution }
-                values[remoteID] = Baseline(remoteID: remoteID, relativePath: try RelativePath(pathText), sha256: hashText, remoteRevision: revisionText)
+                values[remoteID] = Baseline(remoteID: remoteID, relativePath: try RelativePath(pathText), sha256: hashText, remoteRevision: revisionText, courseID: optionalInt64(statement, 4), moduleID: optionalInt64(statement, 5))
             }
             return values
         }
     }
 
     public func upsertBaseline(rootID: UUID, baseline: Baseline) throws {
-        try withStatement("INSERT INTO items(root_id, remote_id, relative_path, base_sha256, remote_revision, last_seen_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(root_id, remote_id) DO UPDATE SET relative_path = excluded.relative_path, base_sha256 = excluded.base_sha256, remote_revision = excluded.remote_revision, last_seen_at = excluded.last_seen_at") { statement in
+        try withStatement("INSERT INTO items(root_id, remote_id, relative_path, base_sha256, remote_revision, last_seen_at, course_id, module_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(root_id, remote_id) DO UPDATE SET relative_path = excluded.relative_path, base_sha256 = excluded.base_sha256, remote_revision = excluded.remote_revision, last_seen_at = excluded.last_seen_at, course_id = COALESCE(excluded.course_id, items.course_id), module_id = COALESCE(excluded.module_id, items.module_id)") { statement in
             try bind(rootID.uuidString, to: statement, index: 1)
             try bind(baseline.remoteID, to: statement, index: 2)
             try bind(baseline.relativePath.value, to: statement, index: 3)
             try bind(baseline.sha256, to: statement, index: 4)
             try bind(baseline.remoteRevision, to: statement, index: 5)
             sqlite3_bind_double(statement, 6, Date().timeIntervalSince1970)
+            try bind(baseline.courseID, to: statement, index: 7)
+            try bind(baseline.moduleID, to: statement, index: 8)
             try stepDone(statement)
+        }
+    }
+
+    public func backfillModuleOwnership(rootID: UUID, files: [RemoteFileCandidate]) throws {
+        try execute("BEGIN IMMEDIATE")
+        do {
+            let owners = Dictionary(grouping: files, by: \.id).compactMapValues { candidates -> (Int64, Int64)? in
+                let values = Set(candidates.map { "\($0.courseID):\($0.moduleID)" })
+                guard values.count == 1, let file = candidates.first else { return nil }
+                return (file.courseID, file.moduleID)
+            }
+            for (remoteID, owner) in owners {
+                try withStatement("UPDATE items SET course_id = ?, module_id = ? WHERE root_id = ? AND remote_id = ? AND course_id IS NULL AND module_id IS NULL") { statement in
+                    guard sqlite3_bind_int64(statement, 1, owner.0) == SQLITE_OK,
+                          sqlite3_bind_int64(statement, 2, owner.1) == SQLITE_OK else { throw SyncDatabaseError.execution }
+                    try bind(rootID.uuidString, to: statement, index: 3)
+                    try bind(remoteID, to: statement, index: 4)
+                    try stepDone(statement)
+                }
+            }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
+
+    public func modulePathOverrides(rootID: UUID, courseID: Int64) throws -> [Int64: ModulePathOverride] {
+        try withStatement("SELECT module_id, local_folder, last_known_name FROM module_path_overrides WHERE root_id = ? AND course_id = ? ORDER BY module_id") { statement in
+            try bind(rootID.uuidString, to: statement, index: 1)
+            guard sqlite3_bind_int64(statement, 2, courseID) == SQLITE_OK else { throw SyncDatabaseError.execution }
+            var values: [Int64: ModulePathOverride] = [:]
+            while try stepRow(statement) {
+                guard let folder = text(statement, 1), let name = text(statement, 2) else { throw SyncDatabaseError.execution }
+                let moduleID = sqlite3_column_int64(statement, 0)
+                values[moduleID] = ModulePathOverride(rootID: rootID, courseID: courseID, moduleID: moduleID, localFolder: folder, lastKnownName: name)
+            }
+            return values
+        }
+    }
+
+    public func modulePathOverrides(rootID: UUID) throws -> [ModulePathOverride] {
+        try withStatement("SELECT course_id, module_id, local_folder, last_known_name FROM module_path_overrides WHERE root_id = ? ORDER BY course_id, module_id") { statement in
+            try bind(rootID.uuidString, to: statement, index: 1)
+            var values: [ModulePathOverride] = []
+            while try stepRow(statement) {
+                guard let folder = text(statement, 2), let name = text(statement, 3) else { throw SyncDatabaseError.execution }
+                values.append(ModulePathOverride(rootID: rootID, courseID: sqlite3_column_int64(statement, 0), moduleID: sqlite3_column_int64(statement, 1), localFolder: folder, lastKnownName: name))
+            }
+            return values
+        }
+    }
+
+    public func modulePathOverride(rootID: UUID, courseID: Int64, moduleID: Int64) throws -> ModulePathOverride? {
+        try modulePathOverrides(rootID: rootID, courseID: courseID)[moduleID]
+    }
+
+    public func updateModulePathOverrideName(rootID: UUID, courseID: Int64, moduleID: Int64, name: String) throws {
+        try withStatement("UPDATE module_path_overrides SET last_known_name = ? WHERE root_id = ? AND course_id = ? AND module_id = ?") { statement in
+            try bind(name, to: statement, index: 1); try bind(rootID.uuidString, to: statement, index: 2)
+            guard sqlite3_bind_int64(statement, 3, courseID) == SQLITE_OK, sqlite3_bind_int64(statement, 4, moduleID) == SQLITE_OK else { throw SyncDatabaseError.execution }
+            try stepDone(statement)
+        }
+    }
+
+    public func rootUnattributedBaselineCount(rootID: UUID) throws -> Int {
+        try withStatement("SELECT COUNT(*) FROM items WHERE root_id = ? AND (course_id IS NULL OR module_id IS NULL)") { statement in
+            try bind(rootID.uuidString, to: statement, index: 1)
+            guard try stepRow(statement) else { throw SyncDatabaseError.execution }
+            return Int(sqlite3_column_int(statement, 0))
+        }
+    }
+
+    public func beginModuleMove(_ move: PendingModuleMove) throws {
+        try execute("BEGIN IMMEDIATE")
+        do {
+            try withStatement("INSERT INTO pending_module_moves(id, root_id, course_id, module_id, action, old_folder, new_folder, last_known_name, phase) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'prepared')") { statement in
+                try bind(move.id.uuidString, to: statement, index: 1); try bind(move.rootID.uuidString, to: statement, index: 2)
+                guard sqlite3_bind_int64(statement, 3, move.courseID) == SQLITE_OK, sqlite3_bind_int64(statement, 4, move.moduleID) == SQLITE_OK else { throw SyncDatabaseError.execution }
+                try bind(move.action.rawValue, to: statement, index: 5); try bind(move.oldFolder, to: statement, index: 6); try bind(move.newFolder, to: statement, index: 7)
+                try bind(move.lastKnownName, to: statement, index: 8); try stepDone(statement)
+            }
+            for file in move.files {
+                try withStatement("INSERT INTO pending_module_move_files(move_id, remote_id, old_path, new_path, source_kind, source_device, source_inode, source_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)") { statement in
+                    try bind(move.id.uuidString, to: statement, index: 1); try bind(file.remoteID, to: statement, index: 2)
+                    try bind(file.oldPath.value, to: statement, index: 3); try bind(file.newPath.value, to: statement, index: 4)
+                    switch file.source {
+                    case .missing:
+                        try bind("MISSING", to: statement, index: 5); sqlite3_bind_null(statement, 6); sqlite3_bind_null(statement, 7); sqlite3_bind_null(statement, 8)
+                    case .present(let snapshot):
+                        try bind("PRESENT", to: statement, index: 5)
+                        guard sqlite3_bind_int64(statement, 6, snapshot.device) == SQLITE_OK,
+                              sqlite3_bind_int64(statement, 7, Int64(bitPattern: snapshot.inode)) == SQLITE_OK else { throw SyncDatabaseError.execution }
+                        try bind(snapshot.sha256, to: statement, index: 8)
+                    }
+                    try stepDone(statement)
+                }
+            }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
+
+    public func pendingModuleMoves(rootID: UUID? = nil) throws -> [PendingModuleMove] {
+        let sql = rootID == nil
+            ? "SELECT id, root_id, course_id, module_id, action, old_folder, new_folder, last_known_name FROM pending_module_moves"
+            : "SELECT id, root_id, course_id, module_id, action, old_folder, new_folder, last_known_name FROM pending_module_moves WHERE root_id = ?"
+        return try withStatement(sql) { statement in
+            if let rootID { try bind(rootID.uuidString, to: statement, index: 1) }
+            var moves: [PendingModuleMove] = []
+            while try stepRow(statement) {
+                guard let id = uuid(statement, 0), let root = uuid(statement, 1),
+                      let actionText = text(statement, 4), let action = ModuleMoveAction(rawValue: actionText),
+                      let name = text(statement, 7) else { throw SyncDatabaseError.execution }
+                moves.append(PendingModuleMove(id: id, rootID: root, courseID: sqlite3_column_int64(statement, 2), moduleID: sqlite3_column_int64(statement, 3), action: action, oldFolder: text(statement, 5), newFolder: text(statement, 6), lastKnownName: name, files: try pendingModuleMoveFiles(id: id)))
+            }
+            return moves
+        }
+    }
+
+    public func commitModuleMove(_ move: PendingModuleMove) throws {
+        try execute("BEGIN IMMEDIATE")
+        do {
+            for file in move.files {
+                try withStatement("UPDATE items SET relative_path = ?, course_id = ?, module_id = ? WHERE root_id = ? AND remote_id = ? AND relative_path = ? AND ((course_id = ? AND module_id = ?) OR (course_id IS NULL AND module_id IS NULL))") { statement in
+                    try bind(file.newPath.value, to: statement, index: 1)
+                    guard sqlite3_bind_int64(statement, 2, move.courseID) == SQLITE_OK,
+                          sqlite3_bind_int64(statement, 3, move.moduleID) == SQLITE_OK else { throw SyncDatabaseError.execution }
+                    try bind(move.rootID.uuidString, to: statement, index: 4)
+                    try bind(file.remoteID, to: statement, index: 5)
+                    try bind(file.oldPath.value, to: statement, index: 6)
+                    guard sqlite3_bind_int64(statement, 7, move.courseID) == SQLITE_OK,
+                          sqlite3_bind_int64(statement, 8, move.moduleID) == SQLITE_OK else { throw SyncDatabaseError.execution }
+                    try stepDone(statement)
+                    guard sqlite3_changes(database) == 1 else { throw SyncDatabaseError.execution }
+                }
+            }
+            switch move.action {
+            case .set:
+                guard let folder = move.newFolder else { throw SyncDatabaseError.execution }
+                try withStatement("INSERT INTO module_path_overrides(root_id, course_id, module_id, local_folder, last_known_name) VALUES (?, ?, ?, ?, ?) ON CONFLICT(root_id, course_id, module_id) DO UPDATE SET local_folder = excluded.local_folder, last_known_name = excluded.last_known_name") { statement in
+                    try bind(move.rootID.uuidString, to: statement, index: 1); guard sqlite3_bind_int64(statement, 2, move.courseID) == SQLITE_OK, sqlite3_bind_int64(statement, 3, move.moduleID) == SQLITE_OK else { throw SyncDatabaseError.execution }
+                    try bind(folder, to: statement, index: 4); try bind(move.lastKnownName, to: statement, index: 5); try stepDone(statement)
+                }
+            case .remove:
+                try withStatement("DELETE FROM module_path_overrides WHERE root_id = ? AND course_id = ? AND module_id = ?") { statement in
+                    try bind(move.rootID.uuidString, to: statement, index: 1); guard sqlite3_bind_int64(statement, 2, move.courseID) == SQLITE_OK, sqlite3_bind_int64(statement, 3, move.moduleID) == SQLITE_OK else { throw SyncDatabaseError.execution }; try stepDone(statement)
+                }
+            }
+            try withStatement("DELETE FROM pending_module_moves WHERE id = ?") { statement in try bind(move.id.uuidString, to: statement, index: 1); try stepDone(statement) }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
+
+    private func pendingModuleMoveFiles(id: UUID) throws -> [PendingModuleMoveFile] {
+        try withStatement("SELECT remote_id, old_path, new_path, source_kind, source_device, source_inode, source_sha256 FROM pending_module_move_files WHERE move_id = ? ORDER BY remote_id") { statement in
+            try bind(id.uuidString, to: statement, index: 1)
+            var files: [PendingModuleMoveFile] = []
+            while try stepRow(statement) {
+                guard let remoteID = text(statement, 0), let old = text(statement, 1), let new = text(statement, 2), let kind = text(statement, 3) else { throw SyncDatabaseError.execution }
+                let source: FileSnapshotState
+                switch kind {
+                case "MISSING": source = .missing
+                case "PRESENT":
+                    guard let sha = text(statement, 6), sqlite3_column_type(statement, 4) != SQLITE_NULL, sqlite3_column_type(statement, 5) != SQLITE_NULL else { throw SyncDatabaseError.execution }
+                    source = .present(FileSnapshot(device: sqlite3_column_int64(statement, 4), inode: UInt64(bitPattern: sqlite3_column_int64(statement, 5)), sha256: sha))
+                default: throw SyncDatabaseError.execution
+                }
+                files.append(PendingModuleMoveFile(remoteID: remoteID, oldPath: try RelativePath(old), newPath: try RelativePath(new), source: source))
+            }
+            return files
         }
     }
 
@@ -278,7 +448,7 @@ public actor SyncDatabase {
     }
 
     public func beginOperation(_ operation: PendingOperation) throws {
-        try withStatement("INSERT INTO pending_operations(id, root_id, remote_id, destination_path, stage_path, expected_local_kind, expected_local_sha256, remote_sha256, remote_revision, phase) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)") { statement in
+        try withStatement("INSERT INTO pending_operations(id, root_id, remote_id, destination_path, stage_path, expected_local_kind, expected_local_sha256, remote_sha256, remote_revision, phase, course_id, module_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)") { statement in
             try bind(operation.id.uuidString, to: statement, index: 1)
             try bind(operation.rootID.uuidString, to: statement, index: 2)
             try bind(operation.remoteID, to: statement, index: 3)
@@ -287,7 +457,7 @@ public actor SyncDatabase {
             switch operation.expectedLocal {
             case .missing:
                 try bind("missing", to: statement, index: 6)
-                try bind(nil, to: statement, index: 7)
+                try bind(nil as String?, to: statement, index: 7)
             case .present(let sha256):
                 try bind("present", to: statement, index: 6)
                 try bind(sha256, to: statement, index: 7)
@@ -295,6 +465,7 @@ public actor SyncDatabase {
             try bind(operation.remoteSHA256, to: statement, index: 8)
             try bind(operation.remoteRevision, to: statement, index: 9)
             try bind(operation.phase.rawValue, to: statement, index: 10)
+            try bind(operation.courseID, to: statement, index: 11); try bind(operation.moduleID, to: statement, index: 12)
             try stepDone(statement)
         }
     }
@@ -335,7 +506,7 @@ public actor SyncDatabase {
     }
 
     public func pendingOperations(rootID: UUID? = nil) throws -> [PendingOperation] {
-        let sql = rootID == nil ? "SELECT id, root_id, remote_id, destination_path, stage_path, expected_local_kind, expected_local_sha256, remote_sha256, remote_revision, phase FROM pending_operations" : "SELECT id, root_id, remote_id, destination_path, stage_path, expected_local_kind, expected_local_sha256, remote_sha256, remote_revision, phase FROM pending_operations WHERE root_id = ?"
+        let sql = rootID == nil ? "SELECT id, root_id, remote_id, destination_path, stage_path, expected_local_kind, expected_local_sha256, remote_sha256, remote_revision, phase, course_id, module_id FROM pending_operations" : "SELECT id, root_id, remote_id, destination_path, stage_path, expected_local_kind, expected_local_sha256, remote_sha256, remote_revision, phase, course_id, module_id FROM pending_operations WHERE root_id = ?"
         return try withStatement(sql) { statement in
             if let rootID { try bind(rootID.uuidString, to: statement, index: 1) }
             var operations: [PendingOperation] = []
@@ -349,7 +520,7 @@ public actor SyncDatabase {
                     expectedLocal = .present(sha256: hash)
                 default: throw SyncDatabaseError.legacyPendingOperation
                 }
-                operations.append(PendingOperation(id: id, rootID: rootID, remoteID: remoteID, destination: try RelativePath(destination), stagePath: try RelativePath(internal: stage), expectedLocal: expectedLocal, remoteSHA256: remoteSHA256, remoteRevision: remoteRevision, phase: phase))
+                operations.append(PendingOperation(id: id, rootID: rootID, remoteID: remoteID, destination: try RelativePath(destination), stagePath: try RelativePath(internal: stage), expectedLocal: expectedLocal, remoteSHA256: remoteSHA256, remoteRevision: remoteRevision, phase: phase, courseID: optionalInt64(statement, 10), moduleID: optionalInt64(statement, 11)))
             }
             return operations
         }
@@ -400,6 +571,12 @@ public actor SyncDatabase {
         }
     }
     public func hasPendingOperations(rootID: UUID, prefix: String) throws -> Bool { try hasPath("pending_operations", column: "destination_path", rootID: rootID, prefix: prefix, extra: "") }
+    public func hasPendingModuleMoves(rootID: UUID) throws -> Bool {
+        try withStatement("SELECT 1 FROM pending_module_moves WHERE root_id = ? LIMIT 1") { statement in
+            try bind(rootID.uuidString, to: statement, index: 1)
+            return try stepRow(statement)
+        }
+    }
     public func trackedItemCount(rootID: UUID, prefix: String) throws -> Int {
         try withStatement("SELECT COUNT(*) FROM items WHERE root_id = ? AND (relative_path = ? OR substr(relative_path, 1, length(?) + 1) = ? || '/')") { statement in
             try bind(rootID.uuidString, to: statement, index: 1); try bind(prefix, to: statement, index: 2); try bind(prefix, to: statement, index: 3); try bind(prefix, to: statement, index: 4)
@@ -440,10 +617,18 @@ public actor SyncDatabase {
         try execute(database, "CREATE TABLE IF NOT EXISTS sync_scopes (root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, course_id INTEGER NOT NULL, display_name TEXT NOT NULL, local_folder TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)), auto_sync INTEGER NOT NULL DEFAULT 0 CHECK(auto_sync IN (0, 1)), managed_directory INTEGER NOT NULL DEFAULT 0 CHECK(managed_directory IN (0, 1)), directory_device INTEGER, directory_inode INTEGER, PRIMARY KEY(root_id, course_id), UNIQUE(root_id, local_folder))")
         if try !columnExists(database, table: "sync_scopes", column: "auto_sync") { try execute(database, "ALTER TABLE sync_scopes ADD COLUMN auto_sync INTEGER NOT NULL DEFAULT 0") }
         try execute(database, "CREATE TABLE IF NOT EXISTS remote_observations (root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, course_id INTEGER NOT NULL, remote_id TEXT NOT NULL, observed_revision TEXT NOT NULL, observed_sha256 TEXT, relative_path TEXT NOT NULL, size INTEGER NOT NULL, first_seen_at REAL NOT NULL, last_seen_at REAL NOT NULL, last_notified_revision TEXT, PRIMARY KEY(root_id, remote_id))")
-        try execute(database, "CREATE TABLE IF NOT EXISTS items (root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, remote_id TEXT NOT NULL, relative_path TEXT NOT NULL, base_sha256 TEXT NOT NULL, remote_revision TEXT NOT NULL, last_seen_at REAL, PRIMARY KEY(root_id, remote_id))")
+        try execute(database, "CREATE TABLE IF NOT EXISTS items (root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, remote_id TEXT NOT NULL, relative_path TEXT NOT NULL, base_sha256 TEXT NOT NULL, remote_revision TEXT NOT NULL, last_seen_at REAL, course_id INTEGER, module_id INTEGER, PRIMARY KEY(root_id, remote_id), CHECK((course_id IS NULL AND module_id IS NULL) OR (course_id IS NOT NULL AND module_id IS NOT NULL)))")
+        if try !columnExists(database, table: "items", column: "course_id") { try execute(database, "ALTER TABLE items ADD COLUMN course_id INTEGER") }
+        if try !columnExists(database, table: "items", column: "module_id") { try execute(database, "ALTER TABLE items ADD COLUMN module_id INTEGER") }
+        try execute(database, "UPDATE items SET course_id = NULL, module_id = NULL WHERE (course_id IS NULL) != (module_id IS NULL)")
         try execute(database, "CREATE TABLE IF NOT EXISTS conflicts (id TEXT PRIMARY KEY, root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, remote_id TEXT NOT NULL, relative_path TEXT NOT NULL, incoming_path TEXT NOT NULL, base_sha256 TEXT, local_sha256 TEXT, remote_sha256 TEXT NOT NULL, remote_revision TEXT NOT NULL, detected_at REAL NOT NULL, status TEXT NOT NULL CHECK(status IN ('open', 'resolved')))")
-        try execute(database, "CREATE TABLE IF NOT EXISTS pending_operations (id TEXT PRIMARY KEY, root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, remote_id TEXT NOT NULL, destination_path TEXT NOT NULL, stage_path TEXT NOT NULL, expected_local_kind TEXT NOT NULL DEFAULT 'unknown' CHECK(expected_local_kind IN ('missing', 'present', 'unknown')), expected_local_sha256 TEXT, remote_sha256 TEXT NOT NULL DEFAULT '', remote_revision TEXT NOT NULL DEFAULT '', phase TEXT NOT NULL DEFAULT 'prepared' CHECK(phase IN ('prepared', 'committed')), UNIQUE(root_id, remote_id), UNIQUE(root_id, destination_path))")
+        try execute(database, "CREATE TABLE IF NOT EXISTS pending_operations (id TEXT PRIMARY KEY, root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, remote_id TEXT NOT NULL, destination_path TEXT NOT NULL, stage_path TEXT NOT NULL, expected_local_kind TEXT NOT NULL DEFAULT 'unknown' CHECK(expected_local_kind IN ('missing', 'present', 'unknown')), expected_local_sha256 TEXT, remote_sha256 TEXT NOT NULL DEFAULT '', remote_revision TEXT NOT NULL DEFAULT '', phase TEXT NOT NULL DEFAULT 'prepared' CHECK(phase IN ('prepared', 'committed')), course_id INTEGER, module_id INTEGER, UNIQUE(root_id, remote_id), UNIQUE(root_id, destination_path))")
+        if try !columnExists(database, table: "pending_operations", column: "course_id") { try execute(database, "ALTER TABLE pending_operations ADD COLUMN course_id INTEGER") }
+        if try !columnExists(database, table: "pending_operations", column: "module_id") { try execute(database, "ALTER TABLE pending_operations ADD COLUMN module_id INTEGER") }
         try execute(database, "CREATE TABLE IF NOT EXISTS pending_scope_moves (id TEXT PRIMARY KEY, root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, course_id INTEGER NOT NULL, old_folder TEXT NOT NULL, new_folder TEXT NOT NULL, phase TEXT NOT NULL CHECK(phase IN ('prepared')), UNIQUE(root_id, course_id), UNIQUE(root_id, new_folder))")
+        try execute(database, "CREATE TABLE IF NOT EXISTS module_path_overrides (root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, course_id INTEGER NOT NULL, module_id INTEGER NOT NULL, local_folder TEXT NOT NULL, last_known_name TEXT NOT NULL, PRIMARY KEY(root_id, course_id, module_id))")
+        try execute(database, "CREATE TABLE IF NOT EXISTS pending_module_moves (id TEXT PRIMARY KEY, root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, course_id INTEGER NOT NULL, module_id INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN ('set', 'remove')), old_folder TEXT, new_folder TEXT, last_known_name TEXT NOT NULL, phase TEXT NOT NULL CHECK(phase = 'prepared'), UNIQUE(root_id, course_id, module_id))")
+        try execute(database, "CREATE TABLE IF NOT EXISTS pending_module_move_files (move_id TEXT NOT NULL REFERENCES pending_module_moves(id) ON DELETE CASCADE, remote_id TEXT NOT NULL, old_path TEXT NOT NULL, new_path TEXT NOT NULL, source_kind TEXT NOT NULL CHECK(source_kind IN ('MISSING', 'PRESENT')), source_device INTEGER, source_inode INTEGER, source_sha256 TEXT, PRIMARY KEY(move_id, remote_id), CHECK((source_kind = 'MISSING' AND source_device IS NULL AND source_inode IS NULL AND source_sha256 IS NULL) OR (source_kind = 'PRESENT' AND source_device IS NOT NULL AND source_inode IS NOT NULL AND source_sha256 IS NOT NULL)))")
         if try !columnExists(database, table: "pending_operations", column: "expected_local_kind") {
             try execute(database, "ALTER TABLE pending_operations ADD COLUMN expected_local_kind TEXT NOT NULL DEFAULT 'unknown'")
             try execute(database, "ALTER TABLE pending_operations ADD COLUMN expected_local_sha256 TEXT")
@@ -462,9 +647,11 @@ public actor SyncDatabase {
         try execute(database, "CREATE UNIQUE INDEX IF NOT EXISTS pending_operations_root_remote ON pending_operations(root_id, remote_id)")
         try execute(database, "CREATE UNIQUE INDEX IF NOT EXISTS pending_operations_root_destination ON pending_operations(root_id, destination_path)")
         try execute(database, "CREATE INDEX IF NOT EXISTS conflicts_root_remote_status ON conflicts(root_id, remote_id, status)")
+        try execute(database, "CREATE INDEX IF NOT EXISTS items_root_course_module ON items(root_id, course_id, module_id)")
         try execute(database, "INSERT OR IGNORE INTO schema_migrations(version) VALUES (1)")
         try execute(database, "INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)")
         try execute(database, "INSERT OR IGNORE INTO schema_migrations(version) VALUES (3)")
+        try execute(database, "INSERT OR IGNORE INTO schema_migrations(version) VALUES (4)")
     }
 
     private static func execute(_ database: OpaquePointer?, _ sql: String) throws {
@@ -496,6 +683,11 @@ public actor SyncDatabase {
         guard sqlite3_bind_text(statement, index, value, -1, transientDestructor) == SQLITE_OK else { throw SyncDatabaseError.execution }
     }
 
+    private func bind(_ value: Int64?, to statement: OpaquePointer, index: Int32) throws {
+        guard let value else { sqlite3_bind_null(statement, index); return }
+        guard sqlite3_bind_int64(statement, index, value) == SQLITE_OK else { throw SyncDatabaseError.execution }
+    }
+
     private func stepDone(_ statement: OpaquePointer) throws {
         guard sqlite3_step(statement) == SQLITE_DONE else { throw SyncDatabaseError.execution }
     }
@@ -510,6 +702,10 @@ public actor SyncDatabase {
 
     private func text(_ statement: OpaquePointer, _ column: Int32) -> String? {
         sqlite3_column_text(statement, column).map { String(cString: $0) }
+    }
+
+    private func optionalInt64(_ statement: OpaquePointer, _ column: Int32) -> Int64? {
+        sqlite3_column_type(statement, column) == SQLITE_NULL ? nil : sqlite3_column_int64(statement, column)
     }
 
     private func uuid(_ statement: OpaquePointer, _ column: Int32) -> UUID? {

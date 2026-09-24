@@ -22,20 +22,21 @@ public actor SyncTransactionCoordinator {
         self.fileStore = fileStore
     }
 
-    public func install(rootID: UUID, remoteID: String, destination: RelativePath, expectedLocal: LocalState, remote: RemoteState, artifact: StagedArtifact) async throws -> TransactionOutcome {
+    public func install(rootID: UUID, remoteID: String, courseID: Int64? = nil, moduleID: Int64? = nil, destination: RelativePath, expectedLocal: LocalState, remote: RemoteState, artifact: StagedArtifact) async throws -> TransactionOutcome {
+        guard (courseID == nil) == (moduleID == nil) else { throw SyncDatabaseError.execution }
         let trace = PerformanceTrace.shared.begin("database.installTransaction", category: .database)
         defer { PerformanceTrace.shared.end("database.installTransaction", category: .database, state: trace) }
         guard artifact.sha256 == remote.sha256 else { throw FileStoreError.invalidStage }
-        let operation = PendingOperation(rootID: rootID, remoteID: remoteID, destination: destination, stagePath: artifact.stagePath, expectedLocal: expectedLocal, remoteSHA256: remote.sha256, remoteRevision: remote.revision)
+        let operation = PendingOperation(rootID: rootID, remoteID: remoteID, destination: destination, stagePath: artifact.stagePath, expectedLocal: expectedLocal, remoteSHA256: remote.sha256, remoteRevision: remote.revision, courseID: courseID, moduleID: moduleID)
         try await database.beginOperation(operation)
         let result = try await fileStore.install(artifact, at: destination, expectedLocal: expectedLocal)
         switch result {
         case .installedNew:
-            try await database.markCommitted(id: operation.id, baseline: Baseline(remoteID: remoteID, relativePath: destination, sha256: remote.sha256, remoteRevision: remote.revision))
+            try await database.markCommitted(id: operation.id, baseline: Baseline(remoteID: remoteID, relativePath: destination, sha256: remote.sha256, remoteRevision: remote.revision, courseID: courseID, moduleID: moduleID))
             try await database.finishOperation(id: operation.id)
             return .installedNew
         case .installedReplacing(let rollback):
-            try await database.markCommitted(id: operation.id, baseline: Baseline(remoteID: remoteID, relativePath: destination, sha256: remote.sha256, remoteRevision: remote.revision))
+            try await database.markCommitted(id: operation.id, baseline: Baseline(remoteID: remoteID, relativePath: destination, sha256: remote.sha256, remoteRevision: remote.revision, courseID: courseID, moduleID: moduleID))
             try await fileStore.discard(rollback)
             try await database.finishOperation(id: operation.id)
             return .installedReplacing
@@ -49,9 +50,10 @@ public actor SyncTransactionCoordinator {
         }
     }
 
-    public func recordConflict(rootID: UUID, remoteID: String, destination: RelativePath, local: LocalState, remote: RemoteState, artifact: StagedArtifact) async throws -> ConflictRecord {
+    public func recordConflict(rootID: UUID, remoteID: String, courseID: Int64? = nil, moduleID: Int64? = nil, destination: RelativePath, local: LocalState, remote: RemoteState, artifact: StagedArtifact) async throws -> ConflictRecord {
+        guard (courseID == nil) == (moduleID == nil) else { throw SyncDatabaseError.execution }
         guard artifact.sha256 == remote.sha256 else { throw FileStoreError.invalidStage }
-        let operation = PendingOperation(rootID: rootID, remoteID: remoteID, destination: destination, stagePath: artifact.stagePath, expectedLocal: local, remoteSHA256: remote.sha256, remoteRevision: remote.revision)
+        let operation = PendingOperation(rootID: rootID, remoteID: remoteID, destination: destination, stagePath: artifact.stagePath, expectedLocal: local, remoteSHA256: remote.sha256, remoteRevision: remote.revision, courseID: courseID, moduleID: moduleID)
         try await database.beginOperation(operation)
         let incoming = try await fileStore.preserveAsConflict(artifact, conflictID: operation.id, at: destination)
         let conflict = ConflictRecord(id: operation.id, rootID: rootID, remoteID: remoteID, relativePath: destination, incomingPath: incoming, baseSHA256: try await database.baseline(rootID: rootID, remoteID: remoteID)?.sha256, localSHA256: local.sha256, remoteSHA256: remote.sha256, remoteRevision: remote.revision, detectedAt: Date(), status: .open)

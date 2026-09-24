@@ -54,12 +54,17 @@ public struct Baseline: Sendable, Equatable {
     public let relativePath: RelativePath
     public let sha256: String
     public let remoteRevision: String
+    public let courseID: Int64?
+    public let moduleID: Int64?
 
-    public init(remoteID: String, relativePath: RelativePath, sha256: String, remoteRevision: String) {
+    public init(remoteID: String, relativePath: RelativePath, sha256: String, remoteRevision: String, courseID: Int64? = nil, moduleID: Int64? = nil) {
+        precondition((courseID == nil) == (moduleID == nil))
         self.remoteID = remoteID
         self.relativePath = relativePath
         self.sha256 = sha256
         self.remoteRevision = remoteRevision
+        self.courseID = courseID
+        self.moduleID = moduleID
     }
 }
 
@@ -90,6 +95,173 @@ public struct DirectoryIdentity: Sendable, Equatable {
     public init(device: Int64, inode: UInt64) {
         self.device = device
         self.inode = inode
+    }
+}
+
+public struct ModulePathOverride: Sendable, Equatable, Identifiable {
+    public let rootID: UUID
+    public let courseID: Int64
+    public let moduleID: Int64
+    public let localFolder: String
+    public let lastKnownName: String
+
+    public var id: String { "\(rootID.uuidString):\(courseID):\(moduleID)" }
+
+    public init(rootID: UUID, courseID: Int64, moduleID: Int64, localFolder: String, lastKnownName: String) {
+        self.rootID = rootID
+        self.courseID = courseID
+        self.moduleID = moduleID
+        self.localFolder = localFolder
+        self.lastKnownName = lastKnownName
+    }
+}
+
+public struct ModulePathRuleRow: Sendable, Equatable, Identifiable {
+    public let moduleID: Int64
+    public let name: String
+    public let moduleType: String
+    public let exposedFileCount: Int
+    public let trackedFileCount: Int
+    public let localFolder: String?
+    public let isAvailable: Bool
+
+    public var id: Int64 { moduleID }
+
+    public init(moduleID: Int64, name: String, moduleType: String, exposedFileCount: Int, trackedFileCount: Int, localFolder: String?, isAvailable: Bool) {
+        self.moduleID = moduleID
+        self.name = name
+        self.moduleType = moduleType
+        self.exposedFileCount = exposedFileCount
+        self.trackedFileCount = trackedFileCount
+        self.localFolder = localFolder
+        self.isAvailable = isAvailable
+    }
+}
+
+public struct FileSnapshot: Sendable, Equatable {
+    public let device: Int64
+    public let inode: UInt64
+    public let sha256: String
+
+    public init(device: Int64, inode: UInt64, sha256: String) {
+        self.device = device
+        self.inode = inode
+        self.sha256 = sha256
+    }
+}
+
+public enum FileSnapshotState: Sendable, Equatable {
+    case missing
+    case present(FileSnapshot)
+}
+
+public enum ModuleMoveAction: String, Sendable, Equatable {
+    case set
+    case remove
+}
+
+public struct ModuleMoveFile: Sendable, Equatable, Identifiable {
+    public let remoteID: String
+    public let oldPath: RelativePath
+    public let newPath: RelativePath
+    public let source: FileSnapshotState
+    public let baselineSHA256: String
+    public let baselineRevision: String
+    public let observedRevision: String
+
+    public var id: String { remoteID }
+
+    public init(remoteID: String, oldPath: RelativePath, newPath: RelativePath, source: FileSnapshotState, baselineSHA256: String, baselineRevision: String, observedRevision: String) {
+        self.remoteID = remoteID
+        self.oldPath = oldPath
+        self.newPath = newPath
+        self.source = source
+        self.baselineSHA256 = baselineSHA256
+        self.baselineRevision = baselineRevision
+        self.observedRevision = observedRevision
+    }
+}
+
+public struct ModuleMovePreview: Sendable, Equatable, Identifiable {
+    public let id: UUID
+    public let rootID: UUID
+    public let courseID: Int64
+    public let moduleID: Int64
+    public let action: ModuleMoveAction
+    public let oldFolder: String?
+    public let newFolder: String?
+    public let lastKnownName: String
+    public let files: [ModuleMoveFile]
+    public let excludedRemoteIDs: [String]
+    public let ownerlessBaselineCount: Int
+    public let fingerprint: String
+
+    public var changedFileCount: Int {
+        files.filter { file in
+            guard case .present = file.source else { return false }
+            return file.oldPath != file.newPath
+        }.count
+    }
+    public var localModifiedCount: Int {
+        files.filter { file in
+            guard case .present(let snapshot) = file.source else { return false }
+            return snapshot.sha256 != file.baselineSHA256
+        }.count
+    }
+
+    public init(id: UUID = UUID(), rootID: UUID, courseID: Int64, moduleID: Int64, action: ModuleMoveAction, oldFolder: String?, newFolder: String?, lastKnownName: String, files: [ModuleMoveFile], excludedRemoteIDs: [String], ownerlessBaselineCount: Int, fingerprint: String) {
+        self.id = id
+        self.rootID = rootID
+        self.courseID = courseID
+        self.moduleID = moduleID
+        self.action = action
+        self.oldFolder = oldFolder
+        self.newFolder = newFolder
+        self.lastKnownName = lastKnownName
+        self.files = files.sorted { $0.remoteID < $1.remoteID }
+        self.excludedRemoteIDs = excludedRemoteIDs.sorted()
+        self.ownerlessBaselineCount = ownerlessBaselineCount
+        self.fingerprint = fingerprint
+    }
+}
+
+public struct PendingModuleMoveFile: Sendable, Equatable, Identifiable {
+    public let remoteID: String
+    public let oldPath: RelativePath
+    public let newPath: RelativePath
+    public let source: FileSnapshotState
+
+    public var id: String { remoteID }
+
+    public init(remoteID: String, oldPath: RelativePath, newPath: RelativePath, source: FileSnapshotState) {
+        self.remoteID = remoteID
+        self.oldPath = oldPath
+        self.newPath = newPath
+        self.source = source
+    }
+}
+
+public struct PendingModuleMove: Sendable, Equatable, Identifiable {
+    public let id: UUID
+    public let rootID: UUID
+    public let courseID: Int64
+    public let moduleID: Int64
+    public let action: ModuleMoveAction
+    public let oldFolder: String?
+    public let newFolder: String?
+    public let lastKnownName: String
+    public let files: [PendingModuleMoveFile]
+
+    public init(id: UUID = UUID(), rootID: UUID, courseID: Int64, moduleID: Int64, action: ModuleMoveAction, oldFolder: String?, newFolder: String?, lastKnownName: String, files: [PendingModuleMoveFile]) {
+        self.id = id
+        self.rootID = rootID
+        self.courseID = courseID
+        self.moduleID = moduleID
+        self.action = action
+        self.oldFolder = oldFolder
+        self.newFolder = newFolder
+        self.lastKnownName = lastKnownName
+        self.files = files
     }
 }
 
@@ -158,8 +330,11 @@ public struct PendingOperation: Sendable, Equatable, Identifiable {
     public let remoteSHA256: String
     public let remoteRevision: String
     public let phase: PendingOperationPhase
+    public let courseID: Int64?
+    public let moduleID: Int64?
 
-    public init(id: UUID = UUID(), rootID: UUID, remoteID: String, destination: RelativePath, stagePath: RelativePath, expectedLocal: LocalState, remoteSHA256: String, remoteRevision: String, phase: PendingOperationPhase = .prepared) {
+    public init(id: UUID = UUID(), rootID: UUID, remoteID: String, destination: RelativePath, stagePath: RelativePath, expectedLocal: LocalState, remoteSHA256: String, remoteRevision: String, phase: PendingOperationPhase = .prepared, courseID: Int64? = nil, moduleID: Int64? = nil) {
+        precondition((courseID == nil) == (moduleID == nil))
         self.id = id
         self.rootID = rootID
         self.remoteID = remoteID
@@ -169,6 +344,8 @@ public struct PendingOperation: Sendable, Equatable, Identifiable {
         self.remoteSHA256 = remoteSHA256
         self.remoteRevision = remoteRevision
         self.phase = phase
+        self.courseID = courseID
+        self.moduleID = moduleID
     }
 }
 

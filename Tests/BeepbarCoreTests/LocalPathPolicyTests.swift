@@ -39,6 +39,25 @@ struct LocalPathPolicyTests {
         #expect(try LocalPathPolicy.destination(courseFolder: "Analisi", file: file).value == "Analisi/Esami/2026/Regole esame.pdf")
     }
 
+    @Test func moduleFolderReplacesMoodlePrefixAndKeepsRemotePathAndFilename() throws {
+        let file = RemoteFileCandidate(id: "9:4:/pluginfile.php/a.pdf", courseID: 9, sectionID: 1, moduleID: 4, sectionName: "Esami", moduleName: "Regole esame", filename: "originale.pdf", remoteFilePath: "/2026/appelli/", canonicalPluginPath: "/pluginfile.php/a.pdf", downloadURL: nil, size: 4, modifiedAt: nil, observedRevision: "1:4", isSupported: true)
+
+        #expect(try LocalPathPolicy.destination(courseFolder: "Analisi", file: file, moduleFolderOverride: "Esami/Orali").value == "Analisi/Esami/Orali/2026/appelli/originale.pdf")
+    }
+
+    @Test func moduleFolderPreservesSingleResourceNaming() throws {
+        let file = RemoteFileCandidate(id: "9:4:/pluginfile.php/a.pdf", courseID: 9, sectionID: 1, moduleID: 4, sectionName: "Esami", moduleName: "Regole esame", moduleType: "resource", isSingleFileResource: true, filename: "originale.pdf", remoteFilePath: "/2026/", canonicalPluginPath: "/pluginfile.php/a.pdf", downloadURL: nil, size: 4, modifiedAt: nil, observedRevision: "1:4", isSupported: true)
+
+        #expect(try LocalPathPolicy.destination(courseFolder: "Analisi", file: file, moduleFolderOverride: "Materiali/Esame").value == "Analisi/Materiali/Esame/2026/Regole esame.pdf")
+    }
+
+    @Test func moduleFolderRejectsUnsafePathsAndOverlongComponents() {
+        for path in ["/outside", "../outside", "notes/../outside", ".beepbar", "notes/.BEEPBAR", String(repeating: "a", count: 256)] {
+            #expect(throws: RelativePathError.invalid) { try LocalPathPolicy.moduleFolder(path) }
+        }
+        #expect(throws: RelativePathError.invalid) { try LocalPathPolicy.moduleFolder(String(repeating: "a", count: 513)) }
+    }
+
     @Test func omitsUnnamedSection() throws {
         let file = RemoteFileCandidate(id: "9:4:/pluginfile.php/a.pdf", courseID: 9, sectionID: 1, moduleID: 4, sectionName: "", moduleName: "LECTURES", filename: "intro.pdf", remoteFilePath: "/", canonicalPluginPath: "/pluginfile.php/a.pdf", downloadURL: URL(string: "https://webeep.polimi.it/pluginfile.php/a.pdf"), size: 4, modifiedAt: nil, observedRevision: "1:4", isSupported: true)
         #expect(try LocalPathPolicy.destination(courseFolder: "ALGEBRA", file: file).value == "ALGEBRA/LECTURES/intro.pdf")
