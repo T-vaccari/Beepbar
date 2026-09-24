@@ -460,6 +460,134 @@ import Testing
         #expect(fixture.upstream.downloadNetworkAccess == [RecordedNetworkAccess(expensive: false, constrained: false)])
     }
 
+    // A course whose contents Moodle refuses (unenrolled, hidden or restricted course) must not
+    // stop every other selected course from syncing.
+    @Test(arguments: [SyncCoordinatorMode.manual, .automatic])
+    func oneRejectedCourseDoesNotAbortTheOtherCourses(_ mode: SyncCoordinatorMode) async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.rejectContents(course: 2)
+
+        let result = try await fixture.synchronize(targets: [fixture.targets[0], fixture.targets[1]], mode: mode)
+
+        #expect(result.added == 100)
+        #expect(result.failures == 1)
+        #expect(result.failedCourses == 1)
+        let failed = try #require(result.perCourse.first { $0.courseID == 2 })
+        #expect(failed.courseFailure == "Corso non accessibile su Moodle.")
+        #expect(failed.courseFolder == "Course 2")
+        #expect(fixture.upstream.downloadCount == 100)
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lezioni/0.txt").path))
+    }
+
+    @Test func adoptsACourseFolderThatAlreadyExistedSoItCanBeRenamedLater() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        try FileManager.default.createDirectory(at: fixture.root.appending(path: "Course 1"), withIntermediateDirectories: true)
+
+        _ = try await fixture.synchronize(targets: [fixture.targets[0]])
+
+        let scope = try #require(await fixture.database.scope(rootID: fixture.rootID, courseID: 1))
+        let identity = try await FileStore(root: fixture.root).topLevelDirectoryIdentity("Course 1")
+        #expect(scope.managedDirectory != nil)
+        #expect(scope.managedDirectory == identity)
+        let renamer = CourseFolderRenamer(database: fixture.database, fileStore: try FileStore(root: fixture.root), gate: fixture.gate)
+        try await renamer.rename(rootID: fixture.rootID, courseID: 1, from: "Course 1", to: "Renamed")
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: "Renamed/Lezioni/0.txt").path))
+    }
+
+    @Test func repairsALegacyScopeSavedWithoutAFolder() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        try await fixture.database.upsertScope(SyncScope(rootID: fixture.rootID, courseID: 1, displayName: "Course 1", localFolder: "", enabled: true))
+
+        _ = try await fixture.synchronize(targets: [fixture.targets[0]])
+
+        let scope = try #require(await fixture.database.scope(rootID: fixture.rootID, courseID: 1))
+        #expect(scope.localFolder == "Course 1")
+        #expect(scope.managedDirectory == (try await FileStore(root: fixture.root).topLevelDirectoryIdentity("Course 1")))
+    }
+
+    @Test func doesNotReplaceTheIdentityOfAnAlreadyManagedFolder() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let recorded = DirectoryIdentity(device: 1, inode: 2)
+        try await fixture.database.upsertScope(SyncScope(rootID: fixture.rootID, courseID: 1, displayName: "Course 1", localFolder: "Course 1", enabled: true, managedDirectory: recorded))
+        try FileManager.default.createDirectory(at: fixture.root.appending(path: "Course 1"), withIntermediateDirectories: true)
+
+        _ = try await fixture.synchronize(targets: [fixture.targets[0]])
+
+        #expect(try await fixture.database.scope(rootID: fixture.rootID, courseID: 1)?.managedDirectory == recorded)
+    }
+
+    @Test func rejectedCourseIsReportedEvenWhenEverythingElseIsUnchanged() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        _ = try await fixture.synchronize(targets: [fixture.targets[0]])
+        fixture.upstream.rejectContents(course: 2)
+
+        let result = try await fixture.synchronize(targets: [fixture.targets[0], fixture.targets[1]])
+
+        #expect(result.total == 0)
+        #expect(result.failures == 1)
+        #expect(result.perCourse.map(\.courseID) == [2])
+    }
+
+    @Test func everyCourseFailingWithAServerErrorStillReportsServiceUnavailable() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.failContents(course: 1, status: 503)
+        fixture.upstream.failContents(course: 2, status: 502)
+
+        await #expect(throws: WeBeepAPIError.transport(503)) {
+            _ = try await fixture.synchronize(targets: [fixture.targets[0], fixture.targets[1]])
+        }
+    }
+
+    @Test func everyCourseAnsweredByACaptivePortalIsAPlatformProblem() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.failContents(course: 1, status: 200)
+        fixture.upstream.failContents(course: 2, status: 200)
+
+        await #expect(throws: WeBeepAPIError.invalidResponse) {
+            _ = try await fixture.synchronize(targets: [fixture.targets[0], fixture.targets[1]])
+        }
+    }
+
+    @Test func everyCourseRefusedByMoodleIsReportedPerCourse() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.rejectContents(course: 1)
+        fixture.upstream.rejectContents(course: 2)
+
+        let result = try await fixture.synchronize(targets: [fixture.targets[0], fixture.targets[1]])
+
+        #expect(result.failedCourses == 2)
+        #expect(result.added == 0)
+    }
+
+    @Test func oneCourseWithAServerErrorDoesNotAbortTheOthers() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.failContents(course: 2, status: 503)
+
+        let result = try await fixture.synchronize(targets: [fixture.targets[0], fixture.targets[1]])
+
+        #expect(result.added == 100)
+        #expect(result.failedCourses == 1)
+    }
+
+    @Test func expiredTokenWhileReadingContentsStillStopsTheRun() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        fixture.upstream.rejectContents(course: 2, errorCode: "invalidtoken")
+
+        await #expect(throws: WeBeepAPIError.invalidToken) {
+            _ = try await fixture.synchronize(targets: [fixture.targets[0], fixture.targets[1]])
+        }
+    }
+
     @Test func manualSyncDownloadsOverAnyNetwork() async throws {
         let fixture = try await Fixture()
         defer { fixture.remove() }
@@ -542,6 +670,8 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
     private var activeDownloads = 0
     private var peakDownloads = 0
     private var validations = 0
+    private var rejectedContents: [Int64: String] = [:]
+    private var failedContents: [Int64: Int] = [:]
     private var networkAccess: Set<RecordedNetworkAccess> = []
     var downloadDelay: TimeInterval = 0
     var tokenIsValid = true
@@ -566,6 +696,8 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
             files[course]?[file] = File(value: Data(value.utf8), revision: revision, status: status)
         }
     }
+    func rejectContents(course: Int64, errorCode: String = "requireloginerror") { lock.withLock { rejectedContents[course] = errorCode } }
+    func failContents(course: Int64, status: Int) { lock.withLock { failedContents[course] = status } }
     func setStatus(course: Int64, file: Int, status: Int) { lock.withLock { guard var value = files[course]?[file] else { return }; value.status = status; files[course]?[file] = value } }
     func addFile(course: Int64, file: Int, filename: String, value: String, revision: String) {
         lock.withLock { files[course, default: [:]][file] = File(value: Data(value.utf8), revision: revision, filename: filename) }
@@ -587,7 +719,11 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
                     return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, response, 0, false)
                 }
                 let course = Int64(formValue("courseid", body: body) ?? "") ?? 0
-                let response = contents(course: course)
+                if let status = failedContents[course] {
+                    return (HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "text/html"])!, Data(), 0, false)
+                }
+                let response = rejectedContents[course].map { Data(#"{"exception":"moodle_exception","errorcode":"\#($0)","message":"Refused."}"#.utf8) }
+                    ?? contents(course: course)
                 return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, response, 0, false)
             }
             let parts = url.path.split(separator: "/")

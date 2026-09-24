@@ -43,6 +43,12 @@ jobs:
           test "$(xcrun --sdk macosx --show-sdk-version)" = "27.0"
       - name: Swift tests
         run: swift test
+      - name: Verify release version numbering
+        run: |
+          test "$(scripts/build-version.sh 2.0 99)" = "2.0.99"
+          test "$(scripts/build-version.sh 2.0 100)" = "2.1.0"
+          test "$(scripts/build-version.sh 2.0 215)" = "2.2.15"
+          ! scripts/build-version.sh 2 110
       - name: Build and verify Release app
         run: |
           xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release build CODE_SIGNING_ALLOWED=NO
@@ -71,7 +77,7 @@ jobs:
       - name: Compute build version
         run: |
           BASE_VERSION=$(xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release -showBuildSettings | awk '/ MARKETING_VERSION =/ { print $3 }')
-          echo "FULL_VERSION=${BASE_VERSION}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "FULL_VERSION=$(scripts/build-version.sh "$BASE_VERSION" "$GITHUB_RUN_NUMBER")" >> "$GITHUB_ENV"
       - name: Build arm64 Release app
         run: xcodebuild -project Beepbar.xcodeproj -target Beepbar -configuration Release build CODE_SIGNING_ALLOWED=NO MARKETING_VERSION=$FULL_VERSION CURRENT_PROJECT_VERSION=$FULL_VERSION
       - name: Verify app

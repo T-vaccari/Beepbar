@@ -202,6 +202,103 @@ struct ModuleMoveRecoveryTests {
         #expect(try await database.pendingModuleMoves(rootID: rootID).isEmpty)
     }
 
+    @Test func recoveryRemovesTheEmptiedModuleFolderButNeverTheCourseFolder() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.base) }
+        let rootID = UUID()
+        let oldPath = try RelativePath("Course/Old/Nested/file.pdf")
+        let keptPath = try RelativePath("Course/Kept/file.pdf")
+        let newPath = try RelativePath("Course/New/file.pdf")
+        for path in [oldPath, keptPath] {
+            let url = fixture.root.appending(path: path.value)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(path.value.utf8).write(to: url)
+        }
+        let database = try SyncDatabase(url: fixture.base.appending(path: "state.sqlite"))
+        try await database.registerRoot(id: rootID, canonicalPath: fixture.root.path)
+        let fileStore = try FileStore(root: fixture.root)
+        let snapshot = try await presentSnapshot(fileStore, at: oldPath)
+        try await database.upsertBaseline(rootID: rootID, baseline: Baseline(remoteID: "file", relativePath: oldPath, sha256: snapshot.sha256, remoteRevision: "r1", courseID: 1, moduleID: 2))
+        let pending = move(rootID: rootID, courseID: 1, moduleID: 2, remoteID: "file", oldPath: oldPath, newPath: newPath, source: .present(snapshot))
+        try await database.beginModuleMove(pending)
+
+        #expect(try await ModuleMoveRecovery.recover(pending, database: database, fileStore: fileStore))
+
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course/Old").path))
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: keptPath.value).path))
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: newPath.value).path))
+    }
+
+    @Test func recoveryKeepsAModuleFolderThatStillHasOtherEntries() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.base) }
+        let rootID = UUID()
+        let oldPath = try RelativePath("Course/Old/file.pdf")
+        let newPath = try RelativePath("Course/New/file.pdf")
+        let oldURL = fixture.root.appending(path: oldPath.value)
+        try FileManager.default.createDirectory(at: oldURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("content".utf8).write(to: oldURL)
+        try Data("user notes".utf8).write(to: fixture.root.appending(path: "Course/Old/notes.txt"))
+        let database = try SyncDatabase(url: fixture.base.appending(path: "state.sqlite"))
+        try await database.registerRoot(id: rootID, canonicalPath: fixture.root.path)
+        let fileStore = try FileStore(root: fixture.root)
+        let snapshot = try await presentSnapshot(fileStore, at: oldPath)
+        try await database.upsertBaseline(rootID: rootID, baseline: Baseline(remoteID: "file", relativePath: oldPath, sha256: snapshot.sha256, remoteRevision: "r1", courseID: 1, moduleID: 2))
+        let pending = move(rootID: rootID, courseID: 1, moduleID: 2, remoteID: "file", oldPath: oldPath, newPath: newPath, source: .present(snapshot))
+        try await database.beginModuleMove(pending)
+
+        #expect(try await ModuleMoveRecovery.recover(pending, database: database, fileStore: fileStore))
+
+        #expect(try String(contentsOf: fixture.root.appending(path: "Course/Old/notes.txt"), encoding: .utf8) == "user notes")
+    }
+
+    @Test func abandonRecordsWhereEachFileReallyIsWithoutTouchingTheDisk() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.base) }
+        let rootID = UUID()
+        let courseID: Int64 = 1
+        let moduleID: Int64 = 2
+        // moved: already renamed before the crash. stayed: not moved yet, and the user then put a
+        // different file at its destination. lost: moved, then deleted by the user.
+        let paths = ["moved", "stayed", "lost"].map { name in
+            (name, try! RelativePath("Course/Old/\(name).pdf"), try! RelativePath("Course/New/\(name).pdf"))
+        }
+        for (name, old, _) in paths {
+            let url = fixture.root.appending(path: old.value)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(name.utf8).write(to: url)
+        }
+        let database = try SyncDatabase(url: fixture.base.appending(path: "state.sqlite"))
+        try await database.registerRoot(id: rootID, canonicalPath: fixture.root.path)
+        try await database.commitModuleMove(PendingModuleMove(rootID: rootID, courseID: courseID, moduleID: moduleID, action: .set, oldFolder: nil, newFolder: "Old", lastKnownName: "Modulo", files: []))
+        let fileStore = try FileStore(root: fixture.root)
+        var files: [PendingModuleMoveFile] = []
+        for (name, old, new) in paths {
+            let snapshot = try await presentSnapshot(fileStore, at: old)
+            try await database.upsertBaseline(rootID: rootID, baseline: Baseline(remoteID: name, relativePath: old, sha256: snapshot.sha256, remoteRevision: "r1", courseID: courseID, moduleID: moduleID))
+            files.append(PendingModuleMoveFile(remoteID: name, oldPath: old, newPath: new, source: .present(snapshot)))
+        }
+        let pending = PendingModuleMove(rootID: rootID, courseID: courseID, moduleID: moduleID, action: .set, oldFolder: "Old", newFolder: "New", lastKnownName: "Modulo", files: files)
+        try await database.beginModuleMove(pending)
+        try await fileStore.moveRegularFile(from: paths[0].1, to: paths[0].2, expected: try await presentSnapshot(fileStore, at: paths[0].1))
+        try await fileStore.moveRegularFile(from: paths[2].1, to: paths[2].2, expected: try await presentSnapshot(fileStore, at: paths[2].1))
+        try FileManager.default.removeItem(at: fixture.root.appending(path: paths[2].2.value))
+        try Data("someone else".utf8).write(to: fixture.root.appending(path: paths[1].2.value))
+        #expect(try await ModuleMoveRecovery.recover(pending, database: database, fileStore: fileStore) == false)
+
+        try await ModuleMoveRecovery.abandon(pending, database: database, fileStore: fileStore)
+
+        let baselines = try await database.baselines(rootID: rootID)
+        #expect(baselines["moved"]?.relativePath == paths[0].2)
+        #expect(baselines["stayed"]?.relativePath == paths[1].1)
+        #expect(baselines["lost"] == nil)
+        #expect(try await database.pendingModuleMoves(rootID: rootID).isEmpty)
+        #expect(try await database.modulePathOverride(rootID: rootID, courseID: courseID, moduleID: moduleID)?.localFolder == "Old")
+        #expect(try String(contentsOf: fixture.root.appending(path: paths[1].1.value), encoding: .utf8) == "stayed")
+        #expect(try String(contentsOf: fixture.root.appending(path: paths[1].2.value), encoding: .utf8) == "someone else")
+        #expect(try String(contentsOf: fixture.root.appending(path: paths[0].2.value), encoding: .utf8) == "moved")
+    }
+
     private func makeFixture() throws -> (base: URL, root: URL) {
         let base = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         let root = base.appending(path: "sync", directoryHint: .isDirectory)

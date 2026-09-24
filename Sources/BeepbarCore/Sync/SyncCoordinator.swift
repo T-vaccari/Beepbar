@@ -29,8 +29,11 @@ public actor SyncCoordinator {
     private let gate: RootOperationGate
     private let apiClient: WeBeepAPIClient
     private let downloader: RemoteDownloader
+    private let platformName: String
 
-    public init(rootID: UUID, rootURL: URL, database: SyncDatabase, gate: RootOperationGate, apiClient: WeBeepAPIClient, downloader: RemoteDownloader) throws {
+    /// `platformName` is how the user knows the site ("WeBeep", "Moodle"); it only appears in the
+    /// reason shown for a course whose contents could not be read.
+    public init(rootID: UUID, rootURL: URL, database: SyncDatabase, gate: RootOperationGate, apiClient: WeBeepAPIClient, downloader: RemoteDownloader, platformName: String = "Moodle") throws {
         self.rootID = rootID
         self.rootURL = rootURL
         self.database = database
@@ -38,6 +41,7 @@ public actor SyncCoordinator {
         self.gate = gate
         self.apiClient = apiClient
         self.downloader = downloader
+        self.platformName = platformName
     }
 
     public func synchronize(targets: [SyncTarget], token: String, mode: SyncCoordinatorMode, progress: @escaping @Sendable (SyncProgress) async -> Void) async throws -> SyncProgress {
@@ -60,7 +64,7 @@ public actor SyncCoordinator {
             defer { PerformanceTrace.shared.end("sync.baselines", category: .database, state: trace) }
             baselines = try await database.baselines(rootID: rootID)
         }
-        let prepared: (items: [PreparedSyncItem], baselines: [String: Baseline])
+        let prepared: (items: [PreparedSyncItem], baselines: [String: Baseline], failedCourses: [CourseSyncCount])
         do {
             let trace = PerformanceTrace.shared.begin("sync.metadata", category: .sync)
             defer { PerformanceTrace.shared.end("sync.metadata", category: .sync, state: trace) }
@@ -72,10 +76,12 @@ public actor SyncCoordinator {
             defer { PerformanceTrace.shared.end("sync.planning", category: .sync, state: trace) }
             work = try await itemsRequiringReconciliation(prepared.items, baselines: prepared.baselines)
         }
-        guard !work.isEmpty else { return SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0) }
+        // Courses Moodle refused still have to reach the summary, or a run where every other
+        // course is unchanged would report a clean sync.
+        guard !work.isEmpty else { return SyncProgress(completed: 0, total: 0, installed: 0, preservedLocal: 0, unchanged: 0, conflicts: 0, failures: 0).addingCourseFailures(prepared.failedCourses) }
         let runner = ManualSyncRun(rootID: rootID, database: database, fileStore: fileStore, gate: gate, downloader: downloader, networkAccess: mode.networkAccess, maximumConcurrentDownloads: mode.downloadConcurrency)
         do {
-            return try await runner.startWithinLease(items: work, token: token, progress: progress)
+            return try await runner.startWithinLease(items: work, token: token, progress: progress).addingCourseFailures(prepared.failedCourses)
         } catch SyncDownloadError.authorizationRejected(let status) {
             do {
                 _ = try await apiClient.validateToken(token)
@@ -92,29 +98,55 @@ public actor SyncCoordinator {
         for target in targets {
             try Task.checkCancellation()
             let result = try await fileStore.ensureTopLevelDirectory(target.localFolder)
-            if result.created, let scope = scopesByCourse[target.courseID] {
+            // A folder that was already there (a root chosen again, a folder the user made first)
+            // is adopted the first time it is synced into, or renaming the course could never
+            // prove it is the same directory later on.
+            // A freshly created folder always records the target (this also repairs a legacy scope
+            // saved without a folder); adoption only applies to the folder the scope already names.
+            guard let scope = scopesByCourse[target.courseID] else { continue }
+            if result.created || (scope.managedDirectory == nil && scope.localFolder == target.localFolder) {
                 try await database.upsertScope(SyncScope(rootID: rootID, courseID: scope.courseID, displayName: scope.displayName, localFolder: target.localFolder, enabled: scope.enabled, managedDirectory: result.identity))
             }
         }
     }
 
-    private func prepareItems(targets: [SyncTarget], token: String, baselines: [String: Baseline], concurrency: Int) async throws -> (items: [PreparedSyncItem], baselines: [String: Baseline]) {
-        try await withThrowingTaskGroup(of: (Int, [RemoteFileCandidate]).self) { group in
+    private func prepareItems(targets: [SyncTarget], token: String, baselines: [String: Baseline], concurrency: Int) async throws -> (items: [PreparedSyncItem], baselines: [String: Baseline], failedCourses: [CourseSyncCount]) {
+        try await withThrowingTaskGroup(of: (Int, Result<[RemoteFileCandidate], WeBeepAPIError>).self) { group in
             var next = 0
             var fetched: [(Int, [RemoteFileCandidate])] = []
+            var failedIndices: [(Int, WeBeepAPIError)] = []
             func enqueue(_ index: Int) {
                 let target = targets[index]
                 group.addTask { [apiClient] in
                     try Task.checkCancellation()
-                    let contents = try await apiClient.fetchContents(courseID: target.courseID, token: token)
+                    let contents: RemoteCourseContents
+                    do {
+                        contents = try await apiClient.fetchContents(courseID: target.courseID, token: token)
+                    } catch let error as WeBeepAPIError where Self.isCourseScoped(error) {
+                        return (index, .failure(error))
+                    }
                     try Task.checkCancellation()
-                    return (index, contents.sections.flatMap(\.modules).flatMap(\.files).filter(\.isSupported))
+                    return (index, .success(contents.sections.flatMap(\.modules).flatMap(\.files).filter(\.isSupported)))
                 }
             }
             while next < min(concurrency, targets.count) { enqueue(next); next += 1 }
-            while let result = try await group.next() {
-                fetched.append(result)
+            while let (index, result) = try await group.next() {
+                switch result {
+                case .success(let files): fetched.append((index, files))
+                case .failure(let error): failedIndices.append((index, error))
+                }
                 if next < targets.count { enqueue(next); next += 1 }
+            }
+            failedIndices.sort { $0.0 < $1.0 }
+            // One course the site refuses (no longer enrolled, hidden, restricted) is that course's
+            // problem. When every course fails with an error about the site or the connection (a
+            // server error, a captive portal answering with HTML), the site is the problem.
+            if let first = failedIndices.first, fetched.isEmpty, failedIndices.allSatisfy({ Self.isSiteLevel($0.1) }) {
+                throw first.1
+            }
+            let reason = "Corso non accessibile su \(platformName)."
+            let failedCourses = failedIndices.map { index, _ in
+                CourseSyncCount(courseID: targets[index].courseID, courseFolder: targets[index].localFolder, added: 0, updated: 0, courseFailure: reason)
             }
             let allFiles = fetched.flatMap { $0.1 }
             try Self.validateUniqueRemoteIDs(allFiles)
@@ -184,7 +216,7 @@ public actor SyncCoordinator {
                 }
             }
             try validateNoDestinationCollisions(items)
-            return (items, currentBaselines)
+            return (items, currentBaselines, failedCourses)
         }
     }
 
@@ -202,6 +234,26 @@ public actor SyncCoordinator {
             identifiersByPath[Self.pathKey(item.destination), default: []].append(item.remote.id)
         }
         guard identifiersByPath.values.allSatisfy({ $0.count == 1 }) else { throw SyncDatabaseError.execution }
+    }
+
+    /// Errors that describe one course's contents rather than the account or the connection. A
+    /// rejected token, a lost network or a refused authorization still stop the whole run.
+    private static func isCourseScoped(_ error: WeBeepAPIError) -> Bool {
+        switch error {
+        case .invalidToken, .network: false
+        case .transport(let status): status != 401 && status != 403
+        case .invalidResponse, .unexpectedRedirect, .responseTooLarge, .malformedPayload, .unexpectedSite, .missingRequiredFunction: true
+        }
+    }
+
+    /// Errors that say nothing about the course itself: the server failed or something other than
+    /// Moodle answered. A Moodle exception or a 4xx is about the course.
+    private static func isSiteLevel(_ error: WeBeepAPIError) -> Bool {
+        switch error {
+        case .transport(let status): status >= 500
+        case .invalidResponse, .unexpectedRedirect: true
+        default: false
+        }
     }
 
     static func validateUniqueRemoteIDs(_ files: [RemoteFileCandidate]) throws {
