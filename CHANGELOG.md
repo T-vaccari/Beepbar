@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- When a teacher moves material to another section on WeBeep, or renames it, Beepbar now moves your copy to the matching folder instead of leaving it behind in the old one, without downloading it again. A file you have edited, or whose new place is already taken by another file, stays where it is, and the Activity page tells you where it now sits on WeBeep. This applies to changes made on WeBeep from now on: after updating, files already sitting in an old folder stay where they are.
+
 - Automatic update checks now start when Beepbar launches, even if Settings is never opened.
 - A scheduled daily synchronization delayed by Low Power Mode or another active operation is now retried instead of skipped until the next day.
 - UI preview runs no longer write notification deduplication state into the installed app's preferences.

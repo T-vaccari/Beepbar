@@ -145,6 +145,9 @@ struct SyncCompletionSummary: Codable, Equatable {
 
     var affectedCourses: [CourseSyncCount] { perCourse.filter { $0.total > 0 } }
     var hasDetail: Bool { !affectedCourses.isEmpty }
+    /// Files moved to follow a move made on Moodle. Derived from `perCourse` rather than stored,
+    /// so summaries saved before moves were followed still decode.
+    var moved: Int { perCourse.reduce(0) { $0 + $1.moved } }
 
     var detail: String {
         let activity: String
@@ -160,7 +163,7 @@ struct SyncCompletionSummary: Codable, Equatable {
             let updatedPart = u == 1 ? tr("1 aggiornato", "1 updated") : tr("\(u) aggiornati", "\(u) updated")
             activity = "\(addedPart) · \(updatedPart)."
         }
-        return activity + preservedSuffix
+        return activity + movedSuffix + preservedSuffix
     }
 
     /// "+12 nuovi · 4 aggiornati" — for places with room for a few words only.
@@ -168,6 +171,7 @@ struct SyncCompletionSummary: Codable, Equatable {
         var parts: [String] = []
         if added > 0 { parts.append(added == 1 ? tr("1 nuovo", "1 new") : tr("\(added) nuovi", "\(added) new")) }
         if updated > 0 { parts.append(updated == 1 ? tr("1 aggiornato", "1 updated") : tr("\(updated) aggiornati", "\(updated) updated")) }
+        if moved > 0 { parts.append(moved == 1 ? tr("1 spostato", "1 moved") : tr("\(moved) spostati", "\(moved) moved")) }
         return parts.isEmpty ? tr("Nessuna novità", "Nothing new") : parts.joined(separator: " · ")
     }
 
@@ -175,6 +179,10 @@ struct SyncCompletionSummary: Codable, Equatable {
     var partialDetail: String {
         let failedCourses = perCourse.filter { $0.courseFailure != nil }.count
         return SyncCopy.partialDetail(failedFiles: max(0, failures - failedCourses), failedCourses: failedCourses)
+    }
+    private var movedSuffix: String {
+        guard moved > 0 else { return "" }
+        return moved == 1 ? tr(" 1 file spostato nella sua nuova cartella.", " 1 file moved to its new folder.") : tr(" \(moved) file spostati nella loro nuova cartella.", " \(moved) files moved to their new folder.")
     }
     private var preservedSuffix: String {
         guard preservedLocal > 0 else { return "" }
@@ -211,6 +219,9 @@ enum SyncCopy {
 extension CourseSyncCount {
     var addedLabel: String { added == 1 ? tr("1 nuovo", "1 new") : tr("\(added) nuovi", "\(added) new") }
     var updatedLabel: String { updated == 1 ? tr("1 aggiornato", "1 updated") : tr("\(updated) aggiornati", "\(updated) updated") }
+    var movedLabel: String { moved == 1 ? tr("1 spostato", "1 moved") : tr("\(moved) spostati", "\(moved) moved") }
+    var keptInPlace: Int { movedItems.count - moved }
+    var keptInPlaceLabel: String { keptInPlace == 1 ? tr("1 lasciato al suo posto", "1 left in place") : tr("\(keptInPlace) lasciati al loro posto", "\(keptInPlace) left in place") }
 }
 
 enum AccountState: Equatable {
