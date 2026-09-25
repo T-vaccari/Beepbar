@@ -3,7 +3,9 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    # `dev` collects every PR and is only tested; a push to `main` (a dev → main merge) is what
+    # publishes a release, see the `release-artifact` job condition.
+    branches: [main, dev]
   workflow_dispatch:
 
 permissions:
