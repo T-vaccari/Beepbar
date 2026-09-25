@@ -142,11 +142,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let openItem = NSMenuItem(title: "Apri Beepbar…", action: #selector(openConfiguration), keyEquivalent: "")
+        let openItem = NSMenuItem(title: snapshot.openTitle, action: #selector(openConfiguration), keyEquivalent: "")
         openItem.target = self
         menu.addItem(openItem)
 
-        let quitItem = NSMenuItem(title: "Esci da Beepbar", action: #selector(quit), keyEquivalent: "")
+        let quitItem = NSMenuItem(title: snapshot.quitTitle, action: #selector(quit), keyEquivalent: "")
         quitItem.target = self
         menu.addItem(quitItem)
     }

@@ -17,36 +17,36 @@ enum AppFailure: Equatable {
 
     var title: String {
         switch self {
-        case .authenticationExpired: "Accesso scaduto"
-        case .connectivity: "Connessione assente"
-        case .serviceUnavailable: "Piattaforma non disponibile"
-        case .incompatibleResponse: "Problema con la piattaforma"
-        case .credentialUnavailable: "Credenziale non disponibile"
-        case .partialSync: "Sincronizzazione incompleta"
-        case .local: "Richiede attenzione"
+        case .authenticationExpired: tr("Accesso scaduto", "Sign-in expired")
+        case .connectivity: tr("Connessione assente", "No connection")
+        case .serviceUnavailable: tr("Piattaforma non disponibile", "Platform unavailable")
+        case .incompatibleResponse: tr("Problema con la piattaforma", "Platform problem")
+        case .credentialUnavailable: tr("Credenziale non disponibile", "Credential unavailable")
+        case .partialSync: tr("Sincronizzazione incompleta", "Sync incomplete")
+        case .local: tr("Richiede attenzione", "Needs attention")
         }
     }
 
     var compactDetail: String {
         switch self {
-        case .authenticationExpired: "Accedi di nuovo"
-        case .connectivity: "Nessuna connessione"
-        case .serviceUnavailable: "Piattaforma non raggiungibile"
-        case .incompatibleResponse: "Risposta inattesa, riprova più tardi"
-        case .credentialUnavailable: "Credenziale non leggibile"
-        case .partialSync: "Alcuni materiali non aggiornati"
-        case .local: "Apri Beepbar per i dettagli"
+        case .authenticationExpired: tr("Accedi di nuovo", "Sign in again")
+        case .connectivity: tr("Nessuna connessione", "No connection")
+        case .serviceUnavailable: tr("Piattaforma non raggiungibile", "Platform unreachable")
+        case .incompatibleResponse: tr("Risposta inattesa, riprova più tardi", "Unexpected response, try again later")
+        case .credentialUnavailable: tr("Credenziale non leggibile", "Credential unreadable")
+        case .partialSync: tr("Alcuni materiali non aggiornati", "Some materials not updated")
+        case .local: tr("Apri Beepbar per i dettagli", "Open Beepbar for details")
         }
     }
 
     var detail: String {
         switch self {
-        case .authenticationExpired: "Accedi di nuovo per riprendere la sincronizzazione."
-        case .connectivity: "Controlla la connessione. Beepbar riproverà automaticamente."
-        case .serviceUnavailable: "La piattaforma non risponde. I materiali locali restano disponibili."
-        case .incompatibleResponse: "La piattaforma ha restituito una risposta inattesa. Riprova più tardi."
-        case .credentialUnavailable: "Beepbar non riesce a salvare o leggere la credenziale locale. Riprova più tardi."
-        case .partialSync: "Alcuni materiali non sono stati aggiornati. I file esistenti sono al sicuro."
+        case .authenticationExpired: tr("Accedi di nuovo per riprendere la sincronizzazione.", "Sign in again to resume syncing.")
+        case .connectivity: tr("Controlla la connessione. Beepbar riproverà automaticamente.", "Check your connection. Beepbar will retry automatically.")
+        case .serviceUnavailable: tr("La piattaforma non risponde. I materiali locali restano disponibili.", "The platform isn't responding. Your local materials remain available.")
+        case .incompatibleResponse: tr("La piattaforma ha restituito una risposta inattesa. Riprova più tardi.", "The platform returned an unexpected response. Try again later.")
+        case .credentialUnavailable: tr("Beepbar non riesce a salvare o leggere la credenziale locale. Riprova più tardi.", "Beepbar can't save or read the local credential. Try again later.")
+        case .partialSync: tr("Alcuni materiali non sono stati aggiornati. I file esistenti sono al sicuro.", "Some materials weren't updated. Your existing files are safe.")
         case .local(let message): message
         }
     }
@@ -68,35 +68,35 @@ enum AppSyncState: Equatable {
 
     var title: String {
         switch self {
-        case .starting: "Avvio"
-        case .loginRequired: "Accedi"
-        case .needsFolder: "Apri Impostazioni"
-        case .readyUnchecked: "Pronto"
-        case .checking: "Controllo aggiornamenti"
-        case .syncing: "Sincronizzazione in corso"
-        case .cancelling: "Annullamento in corso"
-        case .synced: "Sincronizzato"
+        case .starting: tr("Avvio", "Starting")
+        case .loginRequired: tr("Accedi", "Sign in")
+        case .needsFolder: tr("Apri Impostazioni", "Open Settings")
+        case .readyUnchecked: tr("Pronto", "Ready")
+        case .checking: tr("Controllo aggiornamenti", "Checking for updates")
+        case .syncing: tr("Sincronizzazione in corso", "Syncing")
+        case .cancelling: tr("Annullamento in corso", "Cancelling")
+        case .synced: tr("Sincronizzato", "Synced")
         case .conflicts(let count, _): SyncCopy.conflictsTitle(count)
-        case .partial: "Sincronizzazione incompleta"
+        case .partial: tr("Sincronizzazione incompleta", "Sync incomplete")
         case .failed(let failure): failure.title
-        case .recoveryBlocked: "Intervento richiesto"
+        case .recoveryBlocked: tr("Intervento richiesto", "Action required")
         }
     }
 
     var detail: String {
         switch self {
-        case .starting: "Preparazione dello stato locale…"
-        case .loginRequired: "Collega il tuo account per iniziare."
-        case .needsFolder: "Scegli la cartella dei materiali nelle Impostazioni."
-        case .readyUnchecked: "Controlla gli aggiornamenti quando vuoi."
-        case .checking: "Verifica delle modifiche remote in corso…"
-        case .syncing: "I file locali non vengono mai sovrascritti senza una scelta."
-        case .cancelling: "I file incompleti non verranno installati."
+        case .starting: tr("Preparazione dello stato locale…", "Preparing local state…")
+        case .loginRequired: tr("Collega il tuo account per iniziare.", "Connect your account to get started.")
+        case .needsFolder: tr("Scegli la cartella dei materiali nelle Impostazioni.", "Choose the materials folder in Settings.")
+        case .readyUnchecked: tr("Controlla gli aggiornamenti quando vuoi.", "Check for updates whenever you like.")
+        case .checking: tr("Verifica delle modifiche remote in corso…", "Checking for remote changes…")
+        case .syncing: tr("I file locali non vengono mai sovrascritti senza una scelta.", "Local files are never overwritten without your choice.")
+        case .cancelling: tr("I file incompleti non verranno installati.", "Incomplete files won't be installed.")
         case .synced(let summary): summary.detail
-        case .conflicts(_, let summary): summary?.conflictDetail ?? "Scegli quale versione mantenere nella sezione Conflitti."
+        case .conflicts(_, let summary): summary?.conflictDetail ?? tr("Scegli quale versione mantenere nella sezione Conflitti.", "Choose which version to keep in the Conflicts section.")
         case .partial(let summary): summary.partialDetail
         case .failed(let failure): failure.detail
-        case .recoveryBlocked: "Il recupero locale non è stato completato. Riprova dal menu o scegli un'altra cartella."
+        case .recoveryBlocked: tr("Il recupero locale non è stato completato. Riprova dal menu o scegli un'altra cartella.", "Local recovery wasn't completed. Retry from the menu or choose another folder.")
         }
     }
 
@@ -150,14 +150,14 @@ struct SyncCompletionSummary: Codable, Equatable {
         let activity: String
         switch (added, updated) {
         case (0, 0):
-            activity = "Nessun nuovo materiale."
+            activity = tr("Nessun nuovo materiale.", "No new materials.")
         case let (a, 0):
-            activity = a == 1 ? "1 nuovo materiale scaricato." : "\(a) nuovi materiali scaricati."
+            activity = a == 1 ? tr("1 nuovo materiale scaricato.", "1 new material downloaded.") : tr("\(a) nuovi materiali scaricati.", "\(a) new materials downloaded.")
         case let (0, u):
-            activity = u == 1 ? "1 materiale aggiornato." : "\(u) materiali aggiornati."
+            activity = u == 1 ? tr("1 materiale aggiornato.", "1 material updated.") : tr("\(u) materiali aggiornati.", "\(u) materials updated.")
         case let (a, u):
-            let addedPart = a == 1 ? "1 nuovo materiale" : "\(a) nuovi materiali"
-            let updatedPart = u == 1 ? "1 aggiornato" : "\(u) aggiornati"
+            let addedPart = a == 1 ? tr("1 nuovo materiale", "1 new material") : tr("\(a) nuovi materiali", "\(a) new materials")
+            let updatedPart = u == 1 ? tr("1 aggiornato", "1 updated") : tr("\(u) aggiornati", "\(u) updated")
             activity = "\(addedPart) · \(updatedPart)."
         }
         return activity + preservedSuffix
@@ -166,51 +166,51 @@ struct SyncCompletionSummary: Codable, Equatable {
     /// "+12 nuovi · 4 aggiornati" — for places with room for a few words only.
     var compactDetail: String {
         var parts: [String] = []
-        if added > 0 { parts.append(added == 1 ? "1 nuovo" : "\(added) nuovi") }
-        if updated > 0 { parts.append(updated == 1 ? "1 aggiornato" : "\(updated) aggiornati") }
-        return parts.isEmpty ? "Nessuna novità" : parts.joined(separator: " · ")
+        if added > 0 { parts.append(added == 1 ? tr("1 nuovo", "1 new") : tr("\(added) nuovi", "\(added) new")) }
+        if updated > 0 { parts.append(updated == 1 ? tr("1 aggiornato", "1 updated") : tr("\(updated) aggiornati", "\(updated) updated")) }
+        return parts.isEmpty ? tr("Nessuna novità", "Nothing new") : parts.joined(separator: " · ")
     }
 
-    var conflictDetail: String { detail + " Apri Conflitti per scegliere quale versione mantenere." }
+    var conflictDetail: String { detail + tr(" Apri Conflitti per scegliere quale versione mantenere.", " Open Conflicts to choose which version to keep.") }
     var partialDetail: String {
         let failedCourses = perCourse.filter { $0.courseFailure != nil }.count
         return SyncCopy.partialDetail(failedFiles: max(0, failures - failedCourses), failedCourses: failedCourses)
     }
     private var preservedSuffix: String {
         guard preservedLocal > 0 else { return "" }
-        return preservedLocal == 1 ? " 1 modifica locale conservata." : " \(preservedLocal) modifiche locali conservate."
+        return preservedLocal == 1 ? tr(" 1 modifica locale conservata.", " 1 local change kept.") : tr(" \(preservedLocal) modifiche locali conservate.", " \(preservedLocal) local changes kept.")
     }
 }
 
 /// User-facing counts, with Italian singular and plural forms.
 enum SyncCopy {
     static func conflictsTitle(_ count: Int) -> String {
-        count == 1 ? "1 conflitto da risolvere" : "\(count) conflitti da risolvere"
+        count == 1 ? tr("1 conflitto da risolvere", "1 conflict to resolve") : tr("\(count) conflitti da risolvere", "\(count) conflicts to resolve")
     }
 
     static func conflictNotificationBody(_ count: Int) -> String {
         count == 1
-            ? "Beepbar ha conservato separatamente 1 versione remota."
-            : "Beepbar ha conservato separatamente \(count) versioni remote."
+            ? tr("Beepbar ha conservato separatamente 1 versione remota.", "Beepbar kept 1 remote version separately.")
+            : tr("Beepbar ha conservato separatamente \(count) versioni remote.", "Beepbar kept \(count) remote versions separately.")
     }
 
     static func newMaterialsNotificationBody(_ count: Int) -> String {
         count == 1
-            ? "Beepbar ha aggiunto 1 materiale nella cartella scelta."
-            : "Beepbar ha aggiunto \(count) materiali nella cartella scelta."
+            ? tr("Beepbar ha aggiunto 1 materiale nella cartella scelta.", "Beepbar added 1 material to your chosen folder.")
+            : tr("Beepbar ha aggiunto \(count) materiali nella cartella scelta.", "Beepbar added \(count) materials to your chosen folder.")
     }
 
     static func partialDetail(failedFiles: Int, failedCourses: Int) -> String {
         var parts: [String] = []
-        if failedCourses > 0 { parts.append(failedCourses == 1 ? "1 corso non accessibile." : "\(failedCourses) corsi non accessibili.") }
-        if failedFiles > 0 || parts.isEmpty { parts.append(failedFiles == 1 ? "1 materiale non aggiornato." : "\(failedFiles) materiali non aggiornati.") }
-        return (parts + ["I file esistenti sono al sicuro."]).joined(separator: " ")
+        if failedCourses > 0 { parts.append(failedCourses == 1 ? tr("1 corso non accessibile.", "1 course not accessible.") : tr("\(failedCourses) corsi non accessibili.", "\(failedCourses) courses not accessible.")) }
+        if failedFiles > 0 || parts.isEmpty { parts.append(failedFiles == 1 ? tr("1 materiale non aggiornato.", "1 material not updated.") : tr("\(failedFiles) materiali non aggiornati.", "\(failedFiles) materials not updated.")) }
+        return (parts + [tr("I file esistenti sono al sicuro.", "Your existing files are safe.")]).joined(separator: " ")
     }
 }
 
 extension CourseSyncCount {
-    var addedLabel: String { added == 1 ? "1 nuovo" : "\(added) nuovi" }
-    var updatedLabel: String { updated == 1 ? "1 aggiornato" : "\(updated) aggiornati" }
+    var addedLabel: String { added == 1 ? tr("1 nuovo", "1 new") : tr("\(added) nuovi", "\(added) new") }
+    var updatedLabel: String { updated == 1 ? tr("1 aggiornato", "1 updated") : tr("\(updated) aggiornati", "\(updated) updated") }
 }
 
 enum AccountState: Equatable {
@@ -220,9 +220,9 @@ enum AccountState: Equatable {
 
     var title: String {
         switch self {
-        case .notConnected: "Nessun account collegato"
-        case .connected: "Account collegato"
-        case .expired: "Accesso scaduto"
+        case .notConnected: tr("Nessun account collegato", "No account connected")
+        case .connected: tr("Account collegato", "Account connected")
+        case .expired: tr("Accesso scaduto", "Sign-in expired")
         }
     }
 }
@@ -234,6 +234,8 @@ struct MenuBarSnapshot: Sendable {
     let title: String
     let detail: String
     let actionTitle: String
+    let openTitle: String
+    let quitTitle: String
 }
 
 @MainActor final class WeBeepAuthenticationController: NSObject, ObservableObject {
@@ -251,11 +253,12 @@ struct MenuBarSnapshot: Sendable {
     //
     // `refreshMenuBarSnapshot()` is called from `didSet` on every stored property that feeds
     // `menuBarAction`/`menuBarTitle`/`menuBarActionTitle` (currently: syncState, accountState,
-    // hasStoredCredential, recoveryBlocked, conflicts, rootURL, activeOperationID). If you make
+    // hasStoredCredential, recoveryBlocked, conflicts, rootURL, activeOperationID), and
+    // `setLanguage(_:)` calls it since every label depends on `AppLanguage.current`. If you make
     // those computed properties depend on anything else, add a matching
     // `didSet { refreshMenuBarSnapshot() }` to that property too, or the menu bar will silently
     // go stale instead of crashing loudly.
-    private(set) nonisolated(unsafe) var menuBarSnapshot = MenuBarSnapshot(title: "", detail: "", actionTitle: "")
+    private(set) nonisolated(unsafe) var menuBarSnapshot = MenuBarSnapshot(title: "", detail: "", actionTitle: "", openTitle: "", quitTitle: "")
     /// Pushes the status item's icon from the main actor whenever `menuBarSymbol` changes, so
     /// StatusItemController never has to read it from an AppKit callback (same reason as
     /// `menuBarSnapshot`). Set once by StatusItemController's `@MainActor` init.
@@ -272,7 +275,7 @@ struct MenuBarSnapshot: Sendable {
     @Published private(set) var hasStoredCredential: Bool {
         didSet { refreshMenuBarSnapshot() }
     }
-    @Published private(set) var status = "Avvio Beepbar…"
+    @Published private(set) var status = tr("Avvio Beepbar…", "Starting Beepbar…")
     @Published private(set) var syncState: AppSyncState = .starting {
         didSet { refreshMenuBarSnapshot() }
     }
@@ -284,6 +287,8 @@ struct MenuBarSnapshot: Sendable {
         didSet { refreshMenuBarSnapshot() }
     }
     @Published private(set) var needsOnboarding: Bool
+    /// Mirrors `AppLanguage.current`; published so the window rebuilds in the new language.
+    @Published private(set) var language: AppLanguage
     @Published private(set) var enabledCourseIDs: Set<Int64>
     @Published private(set) var automaticSyncEnabled: Bool
     @Published private(set) var automaticSyncInterval: Int
@@ -333,6 +338,14 @@ struct MenuBarSnapshot: Sendable {
         existingRootURL == nil && !onboardingAlreadyCompleted
     }
 
+    /// A stored choice always wins. Without one, installs set up before the setting existed stay
+    /// Italian (the only language they ever had) instead of flipping to the system language on
+    /// update; a fresh install starts from the system language, changeable in onboarding.
+    nonisolated static func resolveLanguage(stored: String?, needsOnboarding: Bool, preferredLanguages: [String]) -> AppLanguage {
+        if let stored, let language = AppLanguage(rawValue: stored) { return language }
+        return needsOnboarding ? AppLanguage.preferred(from: preferredLanguages) : .italian
+    }
+
     override init() {
         let selectedSite = MoodleSite.site(id: Self.defaults.string(forKey: Self.selectedSiteKey))
         self.selectedSite = selectedSite
@@ -340,10 +353,16 @@ struct MenuBarSnapshot: Sendable {
         notificationCoordinator = SyncNotificationCoordinator(defaults: Self.defaults)
         let resolvedRootURL = Self.storedRootURL()
         rootURL = resolvedRootURL
-        needsOnboarding = Self.resolveNeedsOnboarding(existingRootURL: resolvedRootURL, onboardingAlreadyCompleted: Self.defaults.bool(forKey: Self.onboardingCompletedKey))
+        let resolvedNeedsOnboarding = Self.resolveNeedsOnboarding(existingRootURL: resolvedRootURL, onboardingAlreadyCompleted: Self.defaults.bool(forKey: Self.onboardingCompletedKey))
+        needsOnboarding = resolvedNeedsOnboarding
         if resolvedRootURL != nil {
             Self.defaults.set(true, forKey: Self.onboardingCompletedKey)
         }
+        let resolvedLanguage = Self.resolveLanguage(stored: Self.defaults.string(forKey: Self.languageKey), needsOnboarding: resolvedNeedsOnboarding, preferredLanguages: Locale.preferredLanguages)
+        language = resolvedLanguage
+        AppLanguage.current = resolvedLanguage
+        Self.defaults.set(resolvedLanguage.rawValue, forKey: Self.languageKey)
+        status = tr("Avvio Beepbar…", "Starting Beepbar…")
         enabledCourseIDs = Set(Self.defaults.stringArray(forKey: Self.enabledCoursesKey)?.compactMap(Int64.init) ?? [])
         automaticSyncEnabled = Self.defaults.bool(forKey: Self.autoSyncKey)
         let storedAutomaticSyncInterval = Self.validatedAutomaticInterval(Self.defaults.object(forKey: Self.autoSyncIntervalKey) as? Int)
@@ -354,6 +373,7 @@ struct MenuBarSnapshot: Sendable {
         downloader = RemoteDownloader(policy: apiClient.policy)
         database = nil
         super.init()
+        refreshMenuBarSnapshot()
         BeepbarLog.lifecycle.notice("Controller initialized automaticSync=\(self.automaticSyncEnabled, privacy: .public) intervalSeconds=\(self.automaticSyncInterval, privacy: .public)")
 #if DEBUG
         if Self.isUIPreviewOnboarding {
@@ -408,7 +428,7 @@ struct MenuBarSnapshot: Sendable {
                 BeepbarLog.lifecycle.notice("Bootstrap completed recoveryBlocked=\(result.recoveryBlocked, privacy: .public)")
             } catch {
                 BeepbarLog.lifecycle.error("Bootstrap failed errorType=\(String(reflecting: type(of: error)), privacy: .public)")
-                self?.setSyncState(.failed(.local("Impossibile preparare lo stato locale. Riapri Beepbar.")))
+                self?.setSyncState(.failed(.local(tr("Impossibile preparare lo stato locale. Riapri Beepbar.", "Couldn't prepare the local state. Reopen Beepbar."))))
             }
         }
     }
@@ -514,18 +534,18 @@ struct MenuBarSnapshot: Sendable {
     /// a description keep it; the rest would otherwise surface as a generic English system string.
     nonisolated static func moduleFolderErrorMessage(_ error: Error) -> String {
         switch error {
-        case let error as ModulePathMigrationError: return error.errorDescription ?? "Operazione non riuscita. Riprova."
-        case is RootOperationGateError: return "Un'altra operazione è in corso sulla cartella. Riprova tra poco."
+        case let error as ModulePathMigrationError: return error.errorDescription ?? tr("Operazione non riuscita. Riprova.", "Operation failed. Try again.")
+        case is RootOperationGateError: return tr("Un'altra operazione è in corso sulla cartella. Riprova tra poco.", "Another operation is running on the folder. Try again shortly.")
         case let error as WeBeepAPIError:
             switch SyncServiceFailure(error) {
             case .authenticationExpired: return AppFailure.authenticationExpired.detail
-            case .connectivity: return "Connessione assente. Riprova quando sei online."
+            case .connectivity: return tr("Connessione assente. Riprova quando sei online.", "No connection. Try again when you're online.")
             case .serviceUnavailable: return AppFailure.serviceUnavailable.detail
             case .incompatibleResponse: return AppFailure.incompatibleResponse.detail
             }
         case is CredentialStorageError: return AppFailure.credentialUnavailable.detail
-        case is FileStoreError: return "Impossibile accedere ai file del corso. Controlla la cartella e riprova."
-        default: return "Operazione non riuscita. Riprova."
+        case is FileStoreError: return tr("Impossibile accedere ai file del corso. Controlla la cartella e riprova.", "Couldn't access the course files. Check the folder and try again.")
+        default: return tr("Operazione non riuscita. Riprova.", "Operation failed. Try again.")
         }
     }
 
@@ -545,13 +565,13 @@ struct MenuBarSnapshot: Sendable {
 
     var menuBarActionTitle: String {
         switch menuBarAction {
-        case .cancelSync: "Annulla sincronizzazione"
-        case .openConflicts: "Apri conflitti"
-        case .signIn: accountState == .expired ? "Accedi di nuovo" : "Accedi"
-        case .retryCredentialStorage: "Riprova"
-        case .retryRecovery: "Riprova recupero"
-        case .openSettings: "Apri Impostazioni"
-        case .synchronize: "Sincronizza ora"
+        case .cancelSync: tr("Annulla sincronizzazione", "Cancel sync")
+        case .openConflicts: tr("Apri conflitti", "Open conflicts")
+        case .signIn: accountState == .expired ? tr("Accedi di nuovo", "Sign in again") : tr("Accedi", "Sign in")
+        case .retryCredentialStorage: tr("Riprova", "Retry")
+        case .retryRecovery: tr("Riprova recupero", "Retry recovery")
+        case .openSettings: tr("Apri Impostazioni", "Open Settings")
+        case .synchronize: tr("Sincronizza ora", "Sync now")
         }
     }
 
@@ -559,7 +579,9 @@ struct MenuBarSnapshot: Sendable {
         menuBarSnapshot = MenuBarSnapshot(
             title: menuBarTitle,
             detail: menuBarDetail,
-            actionTitle: menuBarActionTitle
+            actionTitle: menuBarActionTitle,
+            openTitle: tr("Apri Beepbar…", "Open Beepbar…"),
+            quitTitle: tr("Esci da Beepbar", "Quit Beepbar")
         )
         let symbol = menuBarSymbol
         if symbol != lastMenuBarSymbol {
@@ -571,24 +593,24 @@ struct MenuBarSnapshot: Sendable {
     /// One short line for the status menu; the full sentences live in the window.
     private var menuBarDetail: String {
         switch syncState {
-        case .starting: "Preparazione…"
-        case .loginRequired: "Collega il tuo account"
-        case .needsFolder: "Scegli la cartella dei materiali"
-        case .readyUnchecked: "Nessun controllo eseguito"
-        case .checking: "Verifica delle novità…"
-        case .syncing: Self.progressDetail(progressStore.progress) ?? "In corso…"
-        case .cancelling: "Attendi…"
+        case .starting: tr("Preparazione…", "Preparing…")
+        case .loginRequired: tr("Collega il tuo account", "Connect your account")
+        case .needsFolder: tr("Scegli la cartella dei materiali", "Choose the materials folder")
+        case .readyUnchecked: tr("Nessun controllo eseguito", "Not checked yet")
+        case .checking: tr("Verifica delle novità…", "Checking for new materials…")
+        case .syncing: Self.progressDetail(progressStore.progress) ?? tr("In corso…", "In progress…")
+        case .cancelling: tr("Attendi…", "Please wait…")
         case .synced(let summary): summary.compactDetail
-        case .conflicts: "Scegli quale versione tenere"
-        case .partial: "Alcuni materiali non aggiornati"
+        case .conflicts: tr("Scegli quale versione tenere", "Choose which version to keep")
+        case .partial: tr("Alcuni materiali non aggiornati", "Some materials not updated")
         case .failed(let failure): failure.compactDetail
-        case .recoveryBlocked: "Recupero locale non completato"
+        case .recoveryBlocked: tr("Recupero locale non completato", "Local recovery not completed")
         }
     }
 
     nonisolated static func progressDetail(_ progress: SyncProgress) -> String? {
         guard progress.total > 0 else { return nil }
-        return "\(progress.completed) di \(progress.total) file"
+        return tr("\(progress.completed) di \(progress.total) file", "\(progress.completed) of \(progress.total) files")
     }
 
     private var menuBarAction: MenuBarAction {
@@ -678,8 +700,8 @@ struct MenuBarSnapshot: Sendable {
 
     func chooseRoot() {
         let panel = NSOpenPanel()
-        panel.title = "Scegli la cartella dei materiali Beepbar"
-        panel.message = "Beepbar creerà una sottocartella per ogni corso abilitato."
+        panel.title = tr("Scegli la cartella dei materiali Beepbar", "Choose the Beepbar materials folder")
+        panel.message = tr("Beepbar creerà una sottocartella per ogni corso abilitato.", "Beepbar will create a subfolder for each enabled course.")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
@@ -726,9 +748,18 @@ struct MenuBarSnapshot: Sendable {
                 await self.restorePersistedSyncState()
                 self.configureBackgroundScheduler()
             } catch {
-                self?.setSyncState(.failed(.local("Non è stato possibile usare questa cartella. Scegline un'altra.")))
+                self?.setSyncState(.failed(.local(tr("Non è stato possibile usare questa cartella. Scegline un'altra.", "This folder couldn't be used. Choose another one."))))
             }
         }
+    }
+
+    func setLanguage(_ newLanguage: AppLanguage) {
+        guard newLanguage != language else { return }
+        AppLanguage.current = newLanguage
+        language = newLanguage
+        Self.defaults.set(newLanguage.rawValue, forKey: Self.languageKey)
+        // The menu is drawn from a snapshot, so it has to be rebuilt in the new language too.
+        refreshMenuBarSnapshot()
     }
 
     func completeOnboarding() {
@@ -755,7 +786,7 @@ struct MenuBarSnapshot: Sendable {
                 do {
                     try await database.upsertScope(SyncScope(rootID: rootID, courseID: course.id, displayName: course.displayName, localFolder: folder, enabled: enabled))
                 } catch {
-                    self?.courseRenameErrors[course.id] = "Impossibile salvare la selezione del corso."
+                    self?.courseRenameErrors[course.id] = tr("Impossibile salvare la selezione del corso.", "Couldn't save the course selection.")
                 }
             }
         }
@@ -780,7 +811,7 @@ struct MenuBarSnapshot: Sendable {
         let oldFolder = folder(for: course)
         let trimmedFolder = newFolder.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedFolder.isEmpty, !ReservedNamespace.isReservedTopLevelName(trimmedFolder) else {
-            courseRenameErrors[course.id] = "Nome cartella non valido."
+            courseRenameErrors[course.id] = tr("Nome cartella non valido.", "Invalid folder name.")
             return
         }
         courseRenameErrors[course.id] = nil
@@ -793,7 +824,7 @@ struct MenuBarSnapshot: Sendable {
                 try await renamer.rename(rootID: rootID, courseID: course.id, from: oldFolder, to: trimmedFolder)
                 self.courseFolders[course.id] = trimmedFolder
             } catch {
-                self?.courseRenameErrors[course.id] = (error as? CourseRenameError)?.errorDescription ?? "Rinomina non riuscita."
+                self?.courseRenameErrors[course.id] = (error as? CourseRenameError)?.errorDescription ?? tr("Rinomina non riuscita.", "Rename failed.")
             }
         }
     }
@@ -938,19 +969,19 @@ struct MenuBarSnapshot: Sendable {
                 switch resolution {
                 case .keepLocal:
                     try await resolver.keepLocal(id: conflict.id)
-                    self.status = "Conflitto risolto: la modifica locale è stata mantenuta."
+                    self.status = tr("Conflitto risolto: la modifica locale è stata mantenuta.", "Conflict resolved: the local change was kept.")
                 case .useRemote:
                     let result = try await resolver.useRemote(id: conflict.id)
                     guard result.isInstalled else {
-                        self.status = "Il file locale è cambiato nel frattempo: conflitto lasciato aperto."
+                        self.status = tr("Il file locale è cambiato nel frattempo: conflitto lasciato aperto.", "The local file changed in the meantime: the conflict was left open.")
                         self.refreshConflicts()
                         return
                     }
-                    self.status = "Conflitto risolto: la versione remota è stata installata."
+                    self.status = tr("Conflitto risolto: la versione remota è stata installata.", "Conflict resolved: the remote version was installed.")
                 }
                 self.refreshConflicts()
             } catch {
-                self?.status = "Impossibile risolvere il conflitto: nessun file locale è stato scartato."
+                self?.status = tr("Impossibile risolvere il conflitto: nessun file locale è stato scartato.", "Couldn't resolve the conflict: no local file was discarded.")
                 self?.refreshConflicts()
             }
         }
@@ -958,7 +989,7 @@ struct MenuBarSnapshot: Sendable {
 
     func startLogin() {
         guard !isAuthenticating else { return }
-        isAuthenticating = true; status = "Autenticazione \(selectedSite.displayName) in corso…"
+        isAuthenticating = true; status = tr("Autenticazione \(selectedSite.displayName) in corso…", "Signing in to \(selectedSite.displayName)…")
         loginWindow = LoginWindowController(site: selectedSite) { [weak self] result in self?.completeLogin(result) }
         loginWindow?.showWindow(nil)
     }
@@ -990,7 +1021,7 @@ struct MenuBarSnapshot: Sendable {
     func validateConnection() {
         guard !Self.isUIPreview else { return }
         guard !isVerifying else { return }
-        isVerifying = true; status = "Verifica connessione \(selectedSite.platformName) in corso…"
+        isVerifying = true; status = tr("Verifica connessione \(selectedSite.platformName) in corso…", "Checking the \(selectedSite.platformName) connection…")
         Task { [weak self] in
             defer { self?.isVerifying = false }
             do {
@@ -1008,7 +1039,7 @@ struct MenuBarSnapshot: Sendable {
             } catch let error as CredentialStorageError {
                 await self?.handleCredentialStorageError(error)
             } catch {
-                self?.setSyncState(.failed(.local("Non è stato possibile verificare la piattaforma. Riprova più tardi.")))
+                self?.setSyncState(.failed(.local(tr("Non è stato possibile verificare la piattaforma. Riprova più tardi.", "The platform couldn't be verified. Try again later."))))
             }
         }
     }
@@ -1031,14 +1062,14 @@ struct MenuBarSnapshot: Sendable {
                 if error == .invalidToken {
                     await self.expireCredential()
                 } else if error == .network(.timedOut) {
-                    self.courseLoadError = "\(self.selectedSite.platformName) non risponde. Riprova."
+                    self.courseLoadError = tr("\(self.selectedSite.platformName) non risponde. Riprova.", "\(self.selectedSite.platformName) isn't responding. Try again.")
                 } else {
-                    self.courseLoadError = "Impossibile aggiornare i corsi da \(self.selectedSite.platformName). Riprova."
+                    self.courseLoadError = tr("Impossibile aggiornare i corsi da \(self.selectedSite.platformName). Riprova.", "Couldn't refresh courses from \(self.selectedSite.platformName). Try again.")
                 }
             } catch let error as CredentialStorageError {
                 await self?.handleCredentialStorageError(error)
             } catch {
-                self?.courseLoadError = "Impossibile aggiornare i corsi. Riprova."
+                self?.courseLoadError = tr("Impossibile aggiornare i corsi. Riprova.", "Couldn't refresh courses. Try again.")
             }
         }
     }
@@ -1078,6 +1109,7 @@ struct MenuBarSnapshot: Sendable {
     private static let lastSuccessfulSummaryKey = "io.github.tvaccari.beepbar.last-successful-summary.v1."
     private static let credentialExpiredKey = "io.github.tvaccari.beepbar.credential-expired.v1"
     private static let selectedSiteKey = "io.github.tvaccari.beepbar.moodle-site.v1"
+    private static let languageKey = "io.github.tvaccari.beepbar.language.v1"
     private static var isUIPreview: Bool {
 #if DEBUG
         ProcessInfo.processInfo.arguments.contains("--ui-preview")
@@ -1128,7 +1160,7 @@ struct MenuBarSnapshot: Sendable {
         loginWindow = nil; isAuthenticating = false
         // A cancelled or failed login leaves the current account and its course list untouched.
         guard case let .success(callback) = result, let token = token(from: callback) else {
-            status = "Accesso a \(selectedSite.platformName) annullato o callback non valido."; return
+            status = tr("Accesso a \(selectedSite.platformName) annullato o callback non valido.", "Sign-in to \(selectedSite.platformName) cancelled or invalid callback."); return
         }
         Task { [weak self] in
             do {
@@ -1146,9 +1178,9 @@ struct MenuBarSnapshot: Sendable {
                 self.configureBackgroundScheduler()
                 self.loadCourses()
             } catch let error as WeBeepAPIError where error == .invalidToken {
-                self?.status = "Il token ricevuto non è valido. Accedi di nuovo alla piattaforma."
+                self?.status = tr("Il token ricevuto non è valido. Accedi di nuovo alla piattaforma.", "The received token isn't valid. Sign in to the platform again.")
             } catch {
-                self?.status = "Impossibile verificare l'accesso alla piattaforma. Il token non è stato salvato."
+                self?.status = tr("Impossibile verificare l'accesso alla piattaforma. Il token non è stato salvato.", "Couldn't verify access to the platform. The token wasn't saved.")
             }
         }
     }
@@ -1235,7 +1267,7 @@ struct MenuBarSnapshot: Sendable {
                     do {
                         try await database.upsertScope(SyncScope(rootID: rootID, courseID: course.id, displayName: course.displayName, localFolder: courseFolders[course.id]!, enabled: enabledCourseIDs.contains(course.id)))
                     } catch {
-                        courseRenameErrors[course.id] = "Impossibile salvare la selezione del corso."
+                        courseRenameErrors[course.id] = tr("Impossibile salvare la selezione del corso.", "Couldn't save the course selection.")
                     }
                 }
             }
@@ -1489,7 +1521,7 @@ struct MenuBarSnapshot: Sendable {
     /// A manual sync found the folder busy with a rename, a module move or a conflict being resolved.
     private func busySync(_ operationID: UUID) {
         guard activeOperationID == operationID else { return }
-        setSyncState(.failed(.local("Un'altra operazione è in corso sulla cartella. Riprova tra poco.")))
+        setSyncState(.failed(.local(tr("Un'altra operazione è in corso sulla cartella. Riprova tra poco.", "Another operation is running on the folder. Try again shortly."))))
         endOperation(operationID)
     }
 
@@ -1654,19 +1686,19 @@ private enum AutomaticNotificationIssue: String {
 
     var title: String {
         switch self {
-        case .authenticationExpired: "Accesso scaduto"
-        case .serviceUnavailable: "Piattaforma non disponibile"
-        case .incompatibleResponse: "Problema con la piattaforma"
-        case .partialSync: "Sincronizzazione incompleta"
+        case .authenticationExpired: tr("Accesso scaduto", "Sign-in expired")
+        case .serviceUnavailable: tr("Piattaforma non disponibile", "Platform unavailable")
+        case .incompatibleResponse: tr("Problema con la piattaforma", "Platform problem")
+        case .partialSync: tr("Sincronizzazione incompleta", "Sync incomplete")
         }
     }
 
     var body: String {
         switch self {
-        case .authenticationExpired: "Apri Beepbar e accedi di nuovo per riprendere la sincronizzazione."
-        case .serviceUnavailable: "La piattaforma non risponde. I materiali locali restano disponibili."
-        case .incompatibleResponse: "La piattaforma ha restituito una risposta inattesa. Apri Beepbar per i dettagli."
-        case .partialSync: "Alcuni materiali non sono stati aggiornati. Apri Beepbar per i dettagli."
+        case .authenticationExpired: tr("Apri Beepbar e accedi di nuovo per riprendere la sincronizzazione.", "Open Beepbar and sign in again to resume syncing.")
+        case .serviceUnavailable: tr("La piattaforma non risponde. I materiali locali restano disponibili.", "The platform isn't responding. Your local materials remain available.")
+        case .incompatibleResponse: tr("La piattaforma ha restituito una risposta inattesa. Apri Beepbar per i dettagli.", "The platform returned an unexpected response. Open Beepbar for details.")
+        case .partialSync: tr("Alcuni materiali non sono stati aggiornati. Apri Beepbar per i dettagli.", "Some materials weren't updated. Open Beepbar for details.")
         }
     }
 }
@@ -1695,14 +1727,14 @@ private enum AutomaticNotificationIssue: String {
         } else {
             let fingerprint = NotificationFingerprint.conflicts(conflicts)
             if deduplication.shouldNotify(condition: "conflicts", fingerprint: fingerprint, now: Date()) {
-                await send(center, title: conflicts.count == 1 ? "Conflitto da risolvere" : "Conflitti da risolvere", body: SyncCopy.conflictNotificationBody(conflicts.count), identifier: "beepbar-conflicts")
+                await send(center, title: conflicts.count == 1 ? tr("Conflitto da risolvere", "Conflict to resolve") : tr("Conflitti da risolvere", "Conflicts to resolve"), body: SyncCopy.conflictNotificationBody(conflicts.count), identifier: "beepbar-conflicts")
             }
         }
         if failures > 0 {
             await notify(issue: .partialSync)
         } else {
             if installed > 0 {
-                await send(center, title: installed == 1 ? "Nuovo materiale disponibile" : "Nuovi materiali disponibili", body: SyncCopy.newMaterialsNotificationBody(installed), identifier: "beepbar-new-files-\(UUID().uuidString)")
+                await send(center, title: installed == 1 ? tr("Nuovo materiale disponibile", "New material available") : tr("Nuovi materiali disponibili", "New materials available"), body: SyncCopy.newMaterialsNotificationBody(installed), identifier: "beepbar-new-files-\(UUID().uuidString)")
             }
         }
     }
@@ -1715,7 +1747,7 @@ private enum AutomaticNotificationIssue: String {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized else { return }
-        await send(center, title: installed == 1 ? "Nuovo materiale disponibile" : "Nuovi materiali disponibili", body: SyncCopy.newMaterialsNotificationBody(installed), identifier: "beepbar-new-files-\(UUID().uuidString)")
+        await send(center, title: installed == 1 ? tr("Nuovo materiale disponibile", "New material available") : tr("Nuovi materiali disponibili", "New materials available"), body: SyncCopy.newMaterialsNotificationBody(installed), identifier: "beepbar-new-files-\(UUID().uuidString)")
     }
 
     func notify(issue: AutomaticNotificationIssue) async {
@@ -1783,13 +1815,13 @@ private enum AutomaticSyncOutcome {
         let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.translatesAutoresizingMaskIntoConstraints = false
-        retryButton = NSButton(title: "Ricarica", target: nil, action: nil)
+        retryButton = NSButton(title: tr("Ricarica", "Reload"), target: nil, action: nil)
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.bezelStyle = .rounded
 
         let spinner = NSProgressIndicator(); spinner.style = .spinning; spinner.controlSize = .regular
         spinner.startAnimation(nil); spinner.translatesAutoresizingMaskIntoConstraints = false
-        let waitingLabel = NSTextField(wrappingLabelWithString: "In attesa di risposta da \(site.displayName), può richiedere qualche secondo.\nSe il caricamento non va a buon fine, chiudi e riprova, oppure premi Ricarica.")
+        let waitingLabel = NSTextField(wrappingLabelWithString: tr("In attesa di risposta da \(site.displayName), può richiedere qualche secondo.\nSe il caricamento non va a buon fine, chiudi e riprova, oppure premi Ricarica.", "Waiting for \(site.displayName) to respond, this can take a few seconds.\nIf loading fails, close and try again, or press Reload."))
         waitingLabel.alignment = .center; waitingLabel.textColor = .secondaryLabelColor
         waitingLabel.translatesAutoresizingMaskIntoConstraints = false
         let waitingStack = NSStackView(views: [spinner, waitingLabel])
@@ -1819,7 +1851,7 @@ private enum AutomaticSyncOutcome {
             retryButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
         ])
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 680), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Accesso \(site.displayName)"; window.contentView = container
+        window.title = tr("Accesso \(site.displayName)", "Sign in to \(site.displayName)"); window.contentView = container
         super.init(window: window); window.delegate = self; webView.navigationDelegate = self; webView.uiDelegate = self
         retryButton.target = self; retryButton.action = #selector(retryTapped)
     }

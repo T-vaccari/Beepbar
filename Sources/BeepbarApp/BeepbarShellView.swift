@@ -8,10 +8,10 @@ enum ShellPage: Int, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .home: "Corsi"
-        case .activity: "Attività"
-        case .conflicts: "Conflitti"
-        case .settings: "Impostazioni"
+        case .home: tr("Corsi", "Courses")
+        case .activity: tr("Attività", "Activity")
+        case .conflicts: tr("Conflitti", "Conflicts")
+        case .settings: tr("Impostazioni", "Settings")
         }
     }
 
@@ -36,7 +36,16 @@ struct BeepbarShellView: View {
     @ObservedObject var router: ShellRouter
     @Namespace private var tabSelection
 
+    // Strings are resolved when a body runs, and rows that take plain values wouldn't rerun on
+    // their own, so a language change rebuilds the whole tree. The page lives in the router, so
+    // Settings stays open across the switch.
     var body: some View {
+        page
+            .id(authentication.language)
+            .environment(\.locale, authentication.language.locale)
+    }
+
+    @ViewBuilder private var page: some View {
         if authentication.needsOnboarding {
             OnboardingView(authentication: authentication)
                 .frame(minWidth: 680, minHeight: 500)

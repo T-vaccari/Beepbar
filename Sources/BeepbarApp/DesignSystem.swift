@@ -1,4 +1,5 @@
 import AppKit
+import BeepbarCore
 import SwiftUI
 
 // Shared building blocks for the configuration window. Animations only run on discrete state
@@ -10,16 +11,16 @@ enum BeepbarStyle {
     static let cardRadius: CGFloat = 12
     static let pagePadding: CGFloat = 24
     static let snappy = Animation.snappy(duration: 0.28)
-    /// The UI copy is Italian regardless of the system language, so dates must be too.
-    static let locale = Locale(identifier: "it_IT")
+    /// Dates follow the app language chosen in Settings, not the system one, to match the copy.
+    static var locale: Locale { AppLanguage.current.locale }
 }
 
 extension Date {
-    var relativeItalian: String {
+    var relativeText: String {
         formatted(.relative(presentation: .named).locale(BeepbarStyle.locale))
     }
 
-    var shortItalian: String {
+    var shortText: String {
         formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(BeepbarStyle.locale))
     }
 }
@@ -164,11 +165,11 @@ enum AutomaticSyncOption: Int, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .halfHour: "Ogni 30 minuti"
-        case .hourly: "Ogni ora"
-        case .twoHours: "Ogni 2 ore"
-        case .fourHours: "Ogni 4 ore"
-        case .thriceDaily: "3 volte al giorno"
+        case .halfHour: tr("Ogni 30 minuti", "Every 30 minutes")
+        case .hourly: tr("Ogni ora", "Every hour")
+        case .twoHours: tr("Ogni 2 ore", "Every 2 hours")
+        case .fourHours: tr("Ogni 4 ore", "Every 4 hours")
+        case .thriceDaily: tr("3 volte al giorno", "3 times a day")
         }
     }
 }

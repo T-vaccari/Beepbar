@@ -29,8 +29,8 @@ public actor ManualSyncEngine {
 
     public func sync(file: RemoteFileCandidate, destination: RelativePath, token: String) async throws -> ManualSyncOutcome {
         try Task.checkCancellation()
-        guard file.isSupported else { return .skipped(file.ineligibilityReason ?? "materiale non supportato") }
-        guard !(try await database.hasOpenConflict(rootID: rootID, remoteID: file.id, revision: file.observedRevision)) else { return .skipped("conflitto già aperto") }
+        guard file.isSupported else { return .skipped(file.ineligibilityReason ?? tr("materiale non supportato", "unsupported material")) }
+        guard !(try await database.hasOpenConflict(rootID: rootID, remoteID: file.id, revision: file.observedRevision)) else { return .skipped(tr("conflitto già aperto", "conflict already open")) }
         let baseline = try await database.baseline(rootID: rootID, remoteID: file.id)
         if let oldPath = baseline?.relativePath, oldPath != destination,
            try await fileStore.containsRegularFile(oldPath) {
