@@ -9,15 +9,15 @@ struct ActivityPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if let summary = authentication.lastSyncSummary {
-                    SectionHeader(title: "Ultima sincronizzazione", subtitle: summary.completedAt.shortItalian)
+                    SectionHeader(title: tr("Ultima sincronizzazione", "Last sync"), subtitle: summary.completedAt.shortText)
                     HStack(spacing: 8) {
-                        MetricTile(value: summary.added, label: "Nuovi", systemImage: "plus.circle.fill", tint: .green)
-                        MetricTile(value: summary.updated, label: "Aggiornati", systemImage: "arrow.triangle.2.circlepath.circle.fill", tint: .blue)
-                        MetricTile(value: summary.preservedLocal, label: "Modifiche tue", systemImage: "lock.circle.fill", tint: .purple)
-                        MetricTile(value: summary.failures, label: "Non aggiornati", systemImage: "exclamationmark.triangle.fill", tint: .orange)
+                        MetricTile(value: summary.added, label: tr("Nuovi", "New"), systemImage: "plus.circle.fill", tint: .green)
+                        MetricTile(value: summary.updated, label: tr("Aggiornati", "Updated"), systemImage: "arrow.triangle.2.circlepath.circle.fill", tint: .blue)
+                        MetricTile(value: summary.preservedLocal, label: tr("Modifiche tue", "Your changes"), systemImage: "lock.circle.fill", tint: .purple)
+                        MetricTile(value: summary.failures, label: tr("Non aggiornati", "Not updated"), systemImage: "exclamationmark.triangle.fill", tint: .orange)
                     }
                     if summary.affectedCourses.isEmpty {
-                        ContentUnavailableView("Nessun corso con nuovi materiali", systemImage: "checkmark.circle", description: Text("Tutto era già aggiornato."))
+                        ContentUnavailableView(tr("Nessun corso con nuovi materiali", "No courses with new materials"), systemImage: "checkmark.circle", description: Text(tr("Tutto era già aggiornato.", "Everything was already up to date.")))
                             .frame(minHeight: 220)
                             .frame(maxWidth: .infinity)
                             .card()
@@ -32,8 +32,8 @@ struct ActivityPage: View {
                         }
                     }
                 } else {
-                    SectionHeader(title: "Ultima sincronizzazione")
-                    ContentUnavailableView("Nessuna sincronizzazione recente", systemImage: "clock", description: Text("Qui troverai i materiali arrivati con l’ultima sincronizzazione."))
+                    SectionHeader(title: tr("Ultima sincronizzazione", "Last sync"))
+                    ContentUnavailableView(tr("Nessuna sincronizzazione recente", "No recent sync"), systemImage: "clock", description: Text(tr("Qui troverai i materiali arrivati con l’ultima sincronizzazione.", "Materials from the last sync will show up here.")))
                         .frame(minHeight: 260)
                         .frame(maxWidth: .infinity)
                         .card()
@@ -60,8 +60,8 @@ private struct CourseActivityCard: View {
                     Spacer(minLength: 8)
                     if course.added > 0 { CountPill(text: course.addedLabel, tint: .green) }
                     if course.updated > 0 { CountPill(text: course.updatedLabel, tint: .blue) }
-                    if course.courseFailure != nil { CountPill(text: "non sincronizzato", tint: .orange) }
-                    if !course.failedItems.isEmpty { CountPill(text: "\(course.failedItems.count) non aggiornati", tint: .orange) }
+                    if course.courseFailure != nil { CountPill(text: tr("non sincronizzato", "not synced"), tint: .orange) }
+                    if !course.failedItems.isEmpty { CountPill(text: tr("\(course.failedItems.count) non aggiornati", "\(course.failedItems.count) not updated"), tint: .orange) }
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tertiary)
@@ -72,7 +72,7 @@ private struct CourseActivityCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityHint(isExpanded ? "Comprimi" : "Espandi")
+            .accessibilityHint(isExpanded ? tr("Comprimi", "Collapse") : tr("Espandi", "Expand"))
 
             if isExpanded {
                 Divider().padding(.leading, 56)
@@ -103,7 +103,7 @@ private struct CourseActivityCard: View {
                         }
                     }
                     if let folderURL {
-                        Button("Mostra nel Finder", systemImage: "folder") { Finder.reveal(folderURL) }
+                        Button(tr("Mostra nel Finder", "Show in Finder"), systemImage: "folder") { Finder.reveal(folderURL) }
                             .buttonStyle(.link)
                             .font(.callout)
                             .padding(.top, 2)

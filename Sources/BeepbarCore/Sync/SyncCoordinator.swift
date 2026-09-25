@@ -144,7 +144,7 @@ public actor SyncCoordinator {
             if let first = failedIndices.first, fetched.isEmpty, failedIndices.allSatisfy({ Self.isSiteLevel($0.1) }) {
                 throw first.1
             }
-            let reason = "Corso non accessibile su \(platformName)."
+            let reason = tr("Corso non accessibile su \(platformName).", "Course not accessible on \(platformName).")
             let failedCourses = failedIndices.map { index, _ in
                 CourseSyncCount(courseID: targets[index].courseID, courseFolder: targets[index].localFolder, added: 0, updated: 0, courseFailure: reason)
             }

@@ -9,17 +9,28 @@ struct SettingsPage: View {
 
     var body: some View {
         Form {
+            languageSection
             accountSection
             folderSection
             automaticSection
             updatesSection
         }
         .formStyle(.grouped)
-        .confirmationDialog("Disconnettere l'account \(authentication.selectedSite.platformName)?", isPresented: $showSignOutConfirmation, titleVisibility: .visible) {
-            Button("Disconnetti", role: .destructive) { authentication.signOut() }
-            Button("Annulla", role: .cancel) {}
+        .confirmationDialog(tr("Disconnettere l'account \(authentication.selectedSite.platformName)?", "Disconnect the \(authentication.selectedSite.platformName) account?"), isPresented: $showSignOutConfirmation, titleVisibility: .visible) {
+            Button(tr("Disconnetti", "Disconnect"), role: .destructive) { authentication.signOut() }
+            Button(tr("Annulla", "Cancel"), role: .cancel) {}
         } message: {
-            Text("Il token salvato viene eliminato da questo Mac. La cartella dei materiali e i file restano dove sono.")
+            Text(tr("Il token salvato viene eliminato da questo Mac. La cartella dei materiali e i file restano dove sono.", "The saved token is removed from this Mac. The materials folder and files stay where they are."))
+        }
+    }
+
+    // MARK: Language
+
+    private var languageSection: some View {
+        Section {
+            LanguagePicker(authentication: authentication)
+        } header: {
+            Text(tr("Lingua", "Language"))
         }
     }
 
@@ -42,22 +53,22 @@ struct SettingsPage: View {
                 if authentication.isVerifying || authentication.isAuthenticating {
                     ProgressView().controlSize(.small)
                 }
-                Button("Verifica") { authentication.validateConnection() }
+                Button(tr("Verifica", "Verify")) { authentication.validateConnection() }
                     .disabled(!authentication.hasStoredCredential || authentication.isVerifying)
                 if authentication.hasStoredCredential {
-                    Button("Disconnetti…") { showSignOutConfirmation = true }
+                    Button(tr("Disconnetti…", "Disconnect…")) { showSignOutConfirmation = true }
                         .disabled(authentication.isSyncActive || authentication.isLoadingCourses)
                 }
                 if authentication.accountState != .connected {
-                    Button(authentication.accountState == .expired ? "Accedi di nuovo" : "Accedi") { authentication.startLogin() }
+                    Button(authentication.accountState == .expired ? tr("Accedi di nuovo", "Sign in again") : tr("Accedi", "Sign in")) { authentication.startLogin() }
                         .buttonStyle(.borderedProminent)
                         .disabled(authentication.isAuthenticating)
                 }
             }
         } header: {
-            Text("Account \(authentication.selectedSite.platformName)")
+            Text(tr("Account \(authentication.selectedSite.platformName)", "\(authentication.selectedSite.platformName) account"))
         } footer: {
-            Label("Il token resta in locale, protetto da permessi ristretti.", systemImage: "lock.fill")
+            Label(tr("Il token resta in locale, protetto da permessi ristretti.", "The token stays on this Mac, protected by restricted permissions."), systemImage: "lock.fill")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -86,7 +97,7 @@ struct SettingsPage: View {
             HStack(spacing: 12) {
                 SymbolTile(systemImage: "folder.fill", tint: .blue, size: 34)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(authentication.rootURL?.lastPathComponent ?? "Nessuna cartella scelta")
+                    Text(authentication.rootURL?.lastPathComponent ?? tr("Nessuna cartella scelta", "No folder chosen"))
                         .font(.body.weight(.medium))
                     if let rootURL = authentication.rootURL {
                         Text((rootURL.path as NSString).abbreviatingWithTildeInPath)
@@ -99,14 +110,14 @@ struct SettingsPage: View {
                 }
                 Spacer()
                 if let rootURL = authentication.rootURL {
-                    Button("Mostra nel Finder") { Finder.reveal(rootURL) }
+                    Button(tr("Mostra nel Finder", "Show in Finder")) { Finder.reveal(rootURL) }
                 }
-                Button(authentication.rootURL == nil ? "Scegli cartella…" : "Cambia…") { authentication.chooseRoot() }
+                Button(authentication.rootURL == nil ? tr("Scegli cartella…", "Choose folder…") : tr("Cambia…", "Change…")) { authentication.chooseRoot() }
             }
         } header: {
-            Text("Cartella dei materiali")
+            Text(tr("Cartella dei materiali", "Materials folder"))
         } footer: {
-            Text("Ogni corso abilitato viene salvato direttamente qui, nella propria cartella.")
+            Text(tr("Ogni corso abilitato viene salvato direttamente qui, nella propria cartella.", "Each enabled course is saved right here, in its own folder."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -116,11 +127,11 @@ struct SettingsPage: View {
 
     private var automaticSection: some View {
         Section {
-            Toggle("Sincronizzazione automatica", isOn: Binding(
+            Toggle(tr("Sincronizzazione automatica", "Automatic sync"), isOn: Binding(
                 get: { authentication.automaticSyncEnabled },
                 set: { authentication.setAutomaticSync(enabled: $0) }
             ))
-            Picker("Frequenza", selection: Binding(
+            Picker(tr("Frequenza", "Frequency"), selection: Binding(
                 get: { authentication.automaticSyncInterval },
                 set: { authentication.setAutomaticSyncInterval($0) }
             )) {
@@ -130,9 +141,9 @@ struct SettingsPage: View {
             }
             .disabled(!authentication.automaticSyncEnabled)
         } header: {
-            Text("Attività in background")
+            Text(tr("Attività in background", "Background activity"))
         } footer: {
-            Text("Tutti i corsi selezionati vengono controllati. Conflitti e modifiche locali non vengono mai sovrascritti automaticamente.")
+            Text(tr("Tutti i corsi selezionati vengono controllati. Conflitti e modifiche locali non vengono mai sovrascritti automaticamente.", "All selected courses are checked. Conflicts and local changes are never overwritten automatically."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -141,15 +152,15 @@ struct SettingsPage: View {
     // MARK: Updates
 
     private var updatesSection: some View {
-        Section("Aggiornamenti") {
-            Toggle("Controlla automaticamente gli aggiornamenti", isOn: $checksForUpdates)
+        Section(tr("Aggiornamenti", "Updates")) {
+            Toggle(tr("Controlla automaticamente gli aggiornamenti", "Check for updates automatically"), isOn: $checksForUpdates)
                 .onChange(of: checksForUpdates) { _, newValue in
                     UpdaterController.shared.automaticallyChecksForUpdates = newValue
                 }
-            LabeledContent("Versione") {
+            LabeledContent(tr("Versione", "Version")) {
                 HStack(spacing: 10) {
                     Text(appVersion).foregroundStyle(.secondary).monospacedDigit()
-                    Button("Cerca aggiornamenti…") { UpdaterController.shared.checkForUpdates() }
+                    Button(tr("Cerca aggiornamenti…", "Check for updates…")) { UpdaterController.shared.checkForUpdates() }
                 }
             }
         }
@@ -157,7 +168,7 @@ struct SettingsPage: View {
 
     private var appVersion: String {
         let info = Bundle.main.infoDictionary
-        guard let version = info?["CFBundleShortVersionString"] as? String else { return "Sviluppo" }
+        guard let version = info?["CFBundleShortVersionString"] as? String else { return tr("Sviluppo", "Development") }
         if let build = info?["CFBundleVersion"] as? String { return "\(version) (\(build))" }
         return version
     }

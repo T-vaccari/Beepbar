@@ -41,18 +41,24 @@ struct OnboardingView: View {
 
     private var welcomeStep: some View {
         VStack(spacing: 14) {
+            // First, before any other text, so the rest of the wizard reads in the chosen language.
+            LanguagePicker(authentication: authentication)
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .padding(.bottom, 6)
             BeepbarLogo(size: 88)
                 .shadow(color: .blue.opacity(0.35), radius: 16, y: 8)
                 .padding(.bottom, 4)
-            Text("Benvenuto in Beepbar").font(.largeTitle.weight(.bold))
-            Text("Sincronizza in sicurezza i materiali universitari sul tuo Mac.")
+            Text(tr("Benvenuto in Beepbar", "Welcome to Beepbar")).font(.largeTitle.weight(.bold))
+            Text(tr("Sincronizza in sicurezza i materiali universitari sul tuo Mac.", "Safely sync your university materials to your Mac."))
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             VStack(alignment: .leading, spacing: 14) {
-                onboardingPoint(systemImage: "lock.shield.fill", tint: .green, text: "Non sovrascrive mai il tuo lavoro: se modifichi un file in locale, quella copia resta intoccata.")
-                onboardingPoint(systemImage: "clock.arrow.circlepath", tint: .blue, text: "Controlla i nuovi materiali in background, con la frequenza che scegli tu.")
-                onboardingPoint(systemImage: "bolt.fill", tint: .orange, text: "Nativo e leggero: vive nella barra dei menu, senza appesantire il Mac.")
+                onboardingPoint(systemImage: "lock.shield.fill", tint: .green, text: tr("Non sovrascrive mai il tuo lavoro: se modifichi un file in locale, quella copia resta intoccata.", "It never overwrites your work: if you edit a file locally, that copy stays untouched."))
+                onboardingPoint(systemImage: "clock.arrow.circlepath", tint: .blue, text: tr("Controlla i nuovi materiali in background, con la frequenza che scegli tu.", "It checks for new materials in the background, as often as you choose."))
+                onboardingPoint(systemImage: "bolt.fill", tint: .orange, text: tr("Nativo e leggero: vive nella barra dei menu, senza appesantire il Mac.", "Native and lightweight: it lives in the menu bar without slowing down your Mac."))
             }
             .card(padding: 18)
             .padding(.top, 10)
@@ -62,8 +68,8 @@ struct OnboardingView: View {
     private var folderStep: some View {
         VStack(spacing: 14) {
             hero("folder.fill.badge.gearshape")
-            Text("Scegli la cartella dei materiali").font(.title.weight(.bold))
-            Text("Qui dentro verrà creata una sottocartella per ogni corso che abiliterai.")
+            Text(tr("Scegli la cartella dei materiali", "Choose the materials folder")).font(.title.weight(.bold))
+            Text(tr("Qui dentro verrà creata una sottocartella per ogni corso che abiliterai.", "A subfolder will be created in here for each course you enable."))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             if let rootURL = authentication.rootURL {
@@ -82,7 +88,7 @@ struct OnboardingView: View {
                 .padding(.top, 4)
                 .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
-            Button(authentication.rootURL == nil ? "Scegli cartella…" : "Cambia cartella…") {
+            Button(authentication.rootURL == nil ? tr("Scegli cartella…", "Choose folder…") : tr("Cambia cartella…", "Change folder…")) {
                 authentication.chooseRoot()
             }
             .buttonStyle(.borderedProminent)
@@ -93,7 +99,7 @@ struct OnboardingView: View {
                     .font(.caption).foregroundStyle(.red)
                     .multilineTextAlignment(.center)
             }
-            Text("Nessun problema, potrai cambiarla in qualsiasi momento da Impostazioni.")
+            Text(tr("Nessun problema, potrai cambiarla in qualsiasi momento da Impostazioni.", "No worries, you can change it any time in Settings."))
                 .font(.caption).foregroundStyle(.secondary)
         }
         .animation(BeepbarStyle.snappy, value: authentication.rootURL)
@@ -102,11 +108,11 @@ struct OnboardingView: View {
     private var wrapUpStep: some View {
         VStack(spacing: 14) {
             hero("checkmark.seal.fill")
-            Text("Ci siamo quasi").font(.title.weight(.bold))
+            Text(tr("Ci siamo quasi", "Almost there")).font(.title.weight(.bold))
             accountBox
             VStack(alignment: .leading, spacing: 14) {
-                onboardingPoint(systemImage: "slider.horizontal.3", tint: .blue, text: "Frequenza del controllo automatico e aggiornamenti dell'app: sempre modificabili da Impostazioni.")
-                onboardingPoint(systemImage: "exclamationmark.triangle.fill", tint: .orange, text: "Se un file cambia sia sul tuo Mac sia su \(authentication.selectedSite.platformName), lo trovi nella sezione Conflitti: decidi tu quale versione tenere.")
+                onboardingPoint(systemImage: "slider.horizontal.3", tint: .blue, text: tr("Frequenza del controllo automatico e aggiornamenti dell'app: sempre modificabili da Impostazioni.", "How often to check automatically and app updates: you can change both any time in Settings."))
+                onboardingPoint(systemImage: "exclamationmark.triangle.fill", tint: .orange, text: tr("Se un file cambia sia sul tuo Mac sia su \(authentication.selectedSite.platformName), lo trovi nella sezione Conflitti: decidi tu quale versione tenere.", "If a file changes both on your Mac and on \(authentication.selectedSite.platformName), you'll find it in the Conflicts section: you decide which version to keep."))
             }
             .padding(.top, 6)
         }
@@ -124,8 +130,8 @@ struct OnboardingView: View {
                     size: 34
                 )
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Accedi a \(authentication.selectedSite.displayName)").font(.callout.weight(.medium))
-                    Text(authentication.hasStoredCredential ? "Account collegato." : "Necessario per iniziare a sincronizzare i corsi.")
+                    Text(tr("Accedi a \(authentication.selectedSite.displayName)", "Sign in to \(authentication.selectedSite.displayName)")).font(.callout.weight(.medium))
+                    Text(authentication.hasStoredCredential ? tr("Account collegato.", "Account connected.") : tr("Necessario per iniziare a sincronizzare i corsi.", "Needed to start syncing your courses."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -134,7 +140,7 @@ struct OnboardingView: View {
                         .font(.title2)
                         .foregroundStyle(.green)
                 } else {
-                    Button("Accedi…") { authentication.startLogin() }
+                    Button(tr("Accedi…", "Sign in…")) { authentication.startLogin() }
                         .buttonStyle(.borderedProminent)
                         .disabled(authentication.isAuthenticating)
                 }
@@ -163,17 +169,17 @@ struct OnboardingView: View {
             }
             HStack {
                 if step != .welcome {
-                    Button("Indietro") { go(to: Step(rawValue: step.rawValue - 1) ?? .welcome) }
+                    Button(tr("Indietro", "Back")) { go(to: Step(rawValue: step.rawValue - 1) ?? .welcome) }
                         .controlSize(.large)
                 }
                 Spacer()
                 if step == .wrapUp {
                     // Not the default action: Return must not skip past the sign-in above.
-                    Button("Inizia a usare Beepbar") { authentication.completeOnboarding() }
+                    Button(tr("Inizia a usare Beepbar", "Start using Beepbar")) { authentication.completeOnboarding() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                 } else {
-                    Button("Continua") { go(to: Step(rawValue: step.rawValue + 1) ?? .wrapUp) }
+                    Button(tr("Continua", "Continue")) { go(to: Step(rawValue: step.rawValue + 1) ?? .wrapUp) }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .keyboardShortcut(.defaultAction)
@@ -189,12 +195,29 @@ struct OnboardingView: View {
     }
 }
 
+/// Options always show their own name ("Italiano", "English") so they're findable from either
+/// language; the label is bilingual for the same reason.
+struct LanguagePicker: View {
+    @ObservedObject var authentication: WeBeepAuthenticationController
+
+    var body: some View {
+        Picker("Lingua / Language", selection: Binding(
+            get: { authentication.language },
+            set: { authentication.setLanguage($0) }
+        )) {
+            ForEach(AppLanguage.allCases) { language in
+                Text(language.nativeName).tag(language)
+            }
+        }
+    }
+}
+
 struct MoodleSitePicker: View {
     @ObservedObject var authentication: WeBeepAuthenticationController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Picker("Università", selection: Binding(
+            Picker(tr("Università", "University"), selection: Binding(
                 get: { authentication.selectedSite.university },
                 set: { authentication.selectUniversity($0) }
             )) {
@@ -203,7 +226,7 @@ struct MoodleSitePicker: View {
                 }
             }
             if authentication.selectedSite.university == .unipd {
-                Picker("Area Moodle", selection: Binding(
+                Picker(tr("Area Moodle", "Moodle area"), selection: Binding(
                     get: { authentication.selectedSite },
                     set: { authentication.selectSite($0) }
                 )) {

@@ -46,15 +46,15 @@ struct HomePage: View {
         let rows = filteredCourses
         return VStack(alignment: .leading, spacing: 12) {
             SectionHeader(
-                title: "Corsi",
-                subtitle: authentication.courses.isEmpty ? nil : "\(enabledCount) di \(authentication.courses.count) sincronizzati"
+                title: tr("Corsi", "Courses"),
+                subtitle: authentication.courses.isEmpty ? nil : tr("\(enabledCount) di \(authentication.courses.count) sincronizzati", "\(enabledCount) of \(authentication.courses.count) synced")
             ) {
                 // Stays visible while a query is active, so a filter can never linger unseen.
                 if authentication.courses.count > 6 || !query.isEmpty { searchField }
                 refreshButton
             }
             if let error = authentication.courseLoadError {
-                NoticeBanner(text: error, systemImage: "wifi.exclamationmark", tint: .red)
+                NoticeBanner(text: error.text, systemImage: "wifi.exclamationmark", tint: .red)
             }
             if authentication.courses.isEmpty {
                 emptyCourses
@@ -63,11 +63,11 @@ struct HomePage: View {
                     .card()
             } else if rows.isEmpty {
                 ContentUnavailableView {
-                    Label("Nessun corso trovato", systemImage: "magnifyingglass")
+                    Label(tr("Nessun corso trovato", "No courses found"), systemImage: "magnifyingglass")
                 } description: {
-                    Text("Nessun corso corrisponde a “\(query)”.")
+                    Text(tr("Nessun corso corrisponde a “\(query)”.", "No course matches “\(query)”."))
                 } actions: {
-                    Button("Cancella ricerca") { query = "" }
+                    Button(tr("Cancella ricerca", "Clear search")) { query = "" }
                 }
                 .frame(maxHeight: .infinity)
                     .frame(maxWidth: .infinity)
@@ -114,19 +114,19 @@ struct HomePage: View {
     private var emptyCourses: some View {
         let site = authentication.selectedSite.platformName
         let description: String = if authentication.courseLoadError != nil {
-            "Riprova con il pulsante di aggiornamento."
+            tr("Riprova con il pulsante di aggiornamento.", "Try again with the refresh button.")
         } else if authentication.hasStoredCredential {
-            "Nessun corso disponibile su \(site)."
+            tr("Nessun corso disponibile su \(site).", "No courses available on \(site).")
         } else {
-            "Collega \(site) per caricare l’elenco dei corsi."
+            tr("Collega \(site) per caricare l’elenco dei corsi.", "Connect \(site) to load your course list.")
         }
         return ContentUnavailableView {
-            Label(authentication.isLoadingCourses ? "Caricamento corsi…" : "Nessun corso caricato", systemImage: "books.vertical")
+            Label(authentication.isLoadingCourses ? tr("Caricamento corsi…", "Loading courses…") : tr("Nessun corso caricato", "No courses loaded"), systemImage: "books.vertical")
         } description: {
             Text(description)
         } actions: {
             if !authentication.hasStoredCredential {
-                Button("Accedi a \(site)") { open(.settings) }
+                Button(tr("Accedi a \(site)", "Sign in to \(site)")) { open(.settings) }
             }
         }
         .frame(minHeight: 140)
@@ -135,13 +135,13 @@ struct HomePage: View {
     private var searchField: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Cerca corso", text: $query)
+            TextField(tr("Cerca corso", "Search courses"), text: $query)
                 .textFieldStyle(.plain)
             if !query.isEmpty {
                 Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain)
                     .foregroundStyle(.tertiary)
-                    .accessibilityLabel("Cancella ricerca")
+                    .accessibilityLabel(tr("Cancella ricerca", "Clear search"))
             }
         }
         .font(.callout)
@@ -161,8 +161,8 @@ struct HomePage: View {
             .frame(width: 20, height: 20)
         }
         .buttonStyle(.borderless)
-        .help("Aggiorna l’elenco dei corsi")
-        .accessibilityLabel("Aggiorna corsi")
+        .help(tr("Aggiorna l’elenco dei corsi", "Refresh the course list"))
+        .accessibilityLabel(tr("Aggiorna corsi", "Refresh courses"))
         .disabled(authentication.accountState != .connected || authentication.isLoadingCourses || authentication.isSyncActive)
     }
 }
@@ -214,16 +214,16 @@ private struct SyncHeroCard: View {
         .animation(BeepbarStyle.snappy, value: authentication.isSyncActive)
         .animation(BeepbarStyle.snappy, value: authentication.conflicts.count)
         .animation(BeepbarStyle.snappy, value: state.badgeSymbol)
-        .confirmationDialog("Abbandonare lo spostamento del modulo?", isPresented: $showAbandonConfirmation, titleVisibility: .visible) {
-            Button("Abbandona spostamento", role: .destructive) { authentication.abandonPendingModuleMoves() }
-            Button("Annulla", role: .cancel) {}
+        .confirmationDialog(tr("Abbandonare lo spostamento del modulo?", "Abandon the module move?"), isPresented: $showAbandonConfirmation, titleVisibility: .visible) {
+            Button(tr("Abbandona spostamento", "Abandon move"), role: .destructive) { authentication.abandonPendingModuleMoves() }
+            Button(tr("Annulla", "Cancel"), role: .cancel) {}
         } message: {
-            Text("Nessun file viene spostato né eliminato: Beepbar registra dove si trova ogni file e il modulo mantiene la cartella precedente.")
+            Text(tr("Nessun file viene spostato né eliminato: Beepbar registra dove si trova ogni file e il modulo mantiene la cartella precedente.", "No files are moved or deleted: Beepbar records where each file is and the module keeps its previous folder."))
         }
     }
 
     private var headline: String {
-        if case .synced = state { return "Tutto aggiornato" }
+        if case .synced = state { return tr("Tutto aggiornato", "All up to date") }
         return state.title
     }
 
@@ -234,11 +234,11 @@ private struct SyncHeroCard: View {
               let summary = authentication.lastSyncSummary,
               summary.completedAt.timeIntervalSince1970 > 0 else { return title }
         let when = now.timeIntervalSince(summary.completedAt) < 60
-            ? "adesso"
+            ? tr("adesso", "just now")
             : summary.completedAt.formatted(.relative(presentation: .named).locale(BeepbarStyle.locale))
         return title
             + Text("  ·  ").font(.callout).foregroundStyle(.tertiary)
-            + Text("sincronizzato \(when)").font(.callout).foregroundStyle(.secondary)
+            + Text(tr("sincronizzato \(when)", "synced \(when)")).font(.callout).foregroundStyle(.secondary)
     }
 
     // "12 nuovi · 4 aggiornati · 1 tua modifica protetta   Dettagli ›" — or the state's own explanation.
@@ -251,13 +251,13 @@ private struct SyncHeroCard: View {
                 if summary.hasDetail {
                     Button { open(.activity) } label: {
                         HStack(spacing: 2) {
-                            Text("Dettagli")
+                            Text(tr("Dettagli", "Details"))
                             Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
                         }
                     }
                     .buttonStyle(.link)
                     .font(.callout)
-                    .help("Vedi cosa è arrivato, corso per corso")
+                    .help(tr("Vedi cosa è arrivato, corso per corso", "See what arrived, course by course"))
                 }
             }
         } else {
@@ -268,7 +268,7 @@ private struct SyncHeroCard: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 if authentication.recoveryBlocked && authentication.hasPendingModuleMoves {
-                    Button("Abbandona spostamento…") { showAbandonConfirmation = true }
+                    Button(tr("Abbandona spostamento…", "Abandon move…")) { showAbandonConfirmation = true }
                         .buttonStyle(.link)
                         .font(.callout)
                         .disabled(authentication.isSyncActive)
@@ -283,19 +283,19 @@ private struct SyncHeroCard: View {
                 + Text(" " + (value == 1 ? one : many))
         }
         var parts: [Text] = []
-        if summary.added > 0 { parts.append(figure(summary.added, "nuovo", "nuovi")) }
-        if summary.updated > 0 { parts.append(figure(summary.updated, "aggiornato", "aggiornati")) }
-        if summary.preservedLocal > 0 { parts.append(figure(summary.preservedLocal, "tua modifica protetta", "tue modifiche protette")) }
+        if summary.added > 0 { parts.append(figure(summary.added, tr("nuovo", "new"), tr("nuovi", "new"))) }
+        if summary.updated > 0 { parts.append(figure(summary.updated, tr("aggiornato", "updated"), tr("aggiornati", "updated"))) }
+        if summary.preservedLocal > 0 { parts.append(figure(summary.preservedLocal, tr("tua modifica protetta", "local change kept"), tr("tue modifiche protette", "local changes kept"))) }
         // `failures` also counts whole courses that failed; split them like `partialDetail` does.
         let failedCourses = summary.perCourse.filter { $0.courseFailure != nil }.count
         let failedFiles = max(0, summary.failures - failedCourses)
         if failedCourses > 0 {
-            parts.append(Text(failedCourses == 1 ? "1 corso non accessibile" : "\(failedCourses) corsi non accessibili").fontWeight(.semibold).foregroundStyle(.orange))
+            parts.append(Text(failedCourses == 1 ? tr("1 corso non accessibile", "1 course not accessible") : tr("\(failedCourses) corsi non accessibili", "\(failedCourses) courses not accessible")).fontWeight(.semibold).foregroundStyle(.orange))
         }
         if failedFiles > 0 {
-            parts.append(Text("\(failedFiles) non aggiornati").fontWeight(.semibold).foregroundStyle(.orange))
+            parts.append(Text(tr("\(failedFiles) non aggiornati", "\(failedFiles) not updated")).fontWeight(.semibold).foregroundStyle(.orange))
         }
-        if parts.isEmpty { parts.append(Text("Nessuna novità")) }
+        if parts.isEmpty { parts.append(Text(tr("Nessuna novità", "Nothing new"))) }
         var text = parts[0]
         for part in parts.dropFirst() { text = text + Text("  ·  ").foregroundStyle(.tertiary) + part }
         return text.font(.callout).foregroundStyle(.secondary)
@@ -303,21 +303,21 @@ private struct SyncHeroCard: View {
 
     @ViewBuilder private var primaryAction: some View {
         if authentication.accountState != .connected {
-            Button("Accedi a \(authentication.selectedSite.platformName)") { open(.settings) }
+            Button(tr("Accedi a \(authentication.selectedSite.platformName)", "Sign in to \(authentication.selectedSite.platformName)")) { open(.settings) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
         } else if authentication.isSyncActive {
-            Button("Annulla") { authentication.cancelSynchronization() }
+            Button(tr("Annulla", "Cancel")) { authentication.cancelSynchronization() }
                 .controlSize(.large)
                 .keyboardShortcut(".", modifiers: .command)
         } else {
             Button { authentication.synchronizeNow() } label: {
-                Label("Sincronizza ora", systemImage: "arrow.triangle.2.circlepath")
+                Label(tr("Sincronizza ora", "Sync now"), systemImage: "arrow.triangle.2.circlepath")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .keyboardShortcut("r", modifiers: .command)
-            .help(authentication.enabledCourseIDs.isEmpty ? "Attiva almeno un corso" : "Sincronizza ora (⌘R)")
+            .help(authentication.enabledCourseIDs.isEmpty ? tr("Attiva almeno un corso", "Enable at least one course") : tr("Sincronizza ora (⌘R)", "Sync now (⌘R)"))
             .disabled(!authentication.canSynchronize)
         }
     }
@@ -326,8 +326,8 @@ private struct SyncHeroCard: View {
     // button, so it stays usable when a sync isn't possible (no course enabled, loading…).
     private var automaticMenu: some View {
         Menu {
-            Picker("Controllo automatico", selection: automaticMode) {
-                Text("Solo manuale").tag(0)
+            Picker(tr("Controllo automatico", "Automatic check"), selection: automaticMode) {
+                Text(tr("Solo manuale", "Manual only")).tag(0)
                 ForEach(AutomaticSyncOption.allCases) { option in
                     Text(option.title).tag(option.rawValue)
                 }
@@ -340,13 +340,13 @@ private struct SyncHeroCard: View {
         .controlSize(.small)
         .fixedSize()
         .disabled(authentication.isSyncActive)
-        .help("Frequenza del controllo automatico in background")
+        .help(tr("Frequenza del controllo automatico in background", "How often to check automatically in the background"))
     }
 
     private var automaticCaption: String {
-        guard authentication.automaticSyncEnabled else { return "Controllo automatico disattivato" }
+        guard authentication.automaticSyncEnabled else { return tr("Controllo automatico disattivato", "Automatic check off") }
         let option = AutomaticSyncOption(rawValue: authentication.automaticSyncInterval)
-        return "Controllo automatico: " + (option?.title.lowercased() ?? "attivo")
+        return tr("Controllo automatico: ", "Automatic check: ") + (option?.title.lowercased() ?? tr("attivo", "on"))
     }
 
     private var conflictsBanner: some View {
@@ -356,7 +356,7 @@ private struct SyncHeroCard: View {
                 Text(conflictsBannerText)
                     .font(.callout)
                 Spacer(minLength: 0)
-                Text("Risolvi").font(.callout.weight(.medium)).foregroundStyle(.tint)
+                Text(tr("Risolvi", "Resolve")).font(.callout.weight(.medium)).foregroundStyle(.tint)
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 12)
@@ -369,9 +369,9 @@ private struct SyncHeroCard: View {
 
     // The .conflicts headline already states the count; the banner then only says what to do.
     private var conflictsBannerText: String {
-        if case .conflicts = state { return "Scegli quale versione tenere per ogni file." }
+        if case .conflicts = state { return tr("Scegli quale versione tenere per ogni file.", "Choose which version to keep for each file.") }
         let count = authentication.conflicts.count
-        return count == 1 ? "1 file ha due versioni: scegli quale tenere." : "\(count) file hanno due versioni: scegli quali tenere."
+        return count == 1 ? tr("1 file ha due versioni: scegli quale tenere.", "1 file has two versions: choose which to keep.") : tr("\(count) file hanno due versioni: scegli quali tenere.", "\(count) files have two versions: choose which to keep.")
     }
 
     private var automaticMode: Binding<Int> {
@@ -398,10 +398,10 @@ private struct SyncProgressLine: View {
                 ProgressView().progressViewStyle(.linear)
             }
             HStack {
-                Text(WeBeepAuthenticationController.progressDetail(progress) ?? "Preparazione…")
+                Text(WeBeepAuthenticationController.progressDetail(progress) ?? tr("Preparazione…", "Preparing…"))
                 Spacer()
                 if progress.installed > 0 {
-                    Text(progress.installed == 1 ? "1 materiale scaricato" : "\(progress.installed) materiali scaricati")
+                    Text(progress.installed == 1 ? tr("1 materiale scaricato", "1 material downloaded") : tr("\(progress.installed) materiali scaricati", "\(progress.installed) materials downloaded"))
                 }
             }
             .font(.caption)
@@ -469,8 +469,8 @@ private struct CourseRow: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .opacity(isHovered || isEditing ? 1 : 0.35)
-            .accessibilityLabel("Azioni per \(course.displayName)")
-            Toggle("Sincronizza \(course.displayName)", isOn: Binding(
+            .accessibilityLabel(tr("Azioni per \(course.displayName)", "Actions for \(course.displayName)"))
+            Toggle(tr("Sincronizza \(course.displayName)", "Sync \(course.displayName)"), isOn: Binding(
                 get: { isEnabled },
                 set: { authentication.setCourse(course, enabled: $0) }
             ))
@@ -491,12 +491,12 @@ private struct CourseRow: View {
     // Menu actions only touch view-local @State or call into the controller the same way the
     // previous buttons did; nothing here bridges AppKit callbacks into the main actor.
     @ViewBuilder private var menuItems: some View {
-        Button("Rinomina cartella…", systemImage: "pencil") { beginRename() }
+        Button(tr("Rinomina cartella…", "Rename folder…"), systemImage: "pencil") { beginRename() }
             .disabled(renameDisabled)
-        Button("Organizza cartelle…", systemImage: "folder.badge.gearshape") { organize() }
+        Button(tr("Organizza cartelle…", "Organize folders…"), systemImage: "folder.badge.gearshape") { organize() }
             .disabled(organizeDisabled)
         Divider()
-        Button("Mostra nel Finder", systemImage: "folder") {
+        Button(tr("Mostra nel Finder", "Show in Finder"), systemImage: "folder") {
             if let folderURL { Finder.reveal(folderURL) }
         }
         .disabled(folderURL == nil)
@@ -504,19 +504,19 @@ private struct CourseRow: View {
 
     private var renameField: some View {
         HStack(spacing: 6) {
-            TextField("Nome cartella locale", text: $proposedFolder)
+            TextField(tr("Nome cartella locale", "Local folder name"), text: $proposedFolder)
                 .textFieldStyle(.roundedBorder)
                 .focused($fieldFocused)
                 .onAppear { fieldFocused = true }
                 .onSubmit { commitRename() }
                 .onExitCommand { cancelRename() }
                 .onChange(of: proposedFolder) { authentication.clearRenameError(for: course) }
-            Button("Conferma", systemImage: "checkmark.circle.fill") { commitRename() }
+            Button(tr("Conferma", "Confirm"), systemImage: "checkmark.circle.fill") { commitRename() }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .foregroundStyle(.tint)
                 .disabled(proposedFolder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("Annulla", systemImage: "xmark.circle.fill") { cancelRename() }
+            Button(tr("Annulla", "Cancel"), systemImage: "xmark.circle.fill") { cancelRename() }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)

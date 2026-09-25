@@ -267,8 +267,8 @@ public final class WeBeepAPIClient: @unchecked Sendable {
                     identityCounts[identity, default: 0] += 1
                     let hasCredentialQuery = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains { $0.name.caseInsensitiveCompare("token") == .orderedSame || $0.name.caseInsensitiveCompare("wstoken") == .orderedSame } == true
                     let reason: String?
-                    if content.isexternalfile == true { reason = "file esterno" }
-                    else if hasCredentialQuery { reason = "URL con credenziale" }
+                    if content.isexternalfile == true { reason = tr("file esterno", "external file") }
+                    else if hasCredentialQuery { reason = tr("URL con credenziale", "URL with credential") }
                     else { reason = nil }
                     if reason != nil { issueCount += 1 }
                     let revision = validContentHash(content.contenthash) ?? "\(modifiedSeconds):\(filesize)"
@@ -294,7 +294,7 @@ public final class WeBeepAPIClient: @unchecked Sendable {
                     guard duplicateIDs.contains(file.id) else { return file }
                     var duplicate = file
                     duplicate.isSupported = false
-                    duplicate.ineligibilityReason = "identificatore remoto duplicato"
+                    duplicate.ineligibilityReason = tr("identificatore remoto duplicato", "duplicate remote identifier")
                     return duplicate
                 })
             })

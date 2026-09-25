@@ -10,26 +10,26 @@ struct ConflictsPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 SectionHeader(
-                    title: "Conflitti",
-                    subtitle: authentication.conflicts.isEmpty ? nil : "\(authentication.conflicts.count) da risolvere"
+                    title: tr("Conflitti", "Conflicts"),
+                    subtitle: authentication.conflicts.isEmpty ? nil : tr("\(authentication.conflicts.count) da risolvere", "\(authentication.conflicts.count) to resolve")
                 ) {
                     Button { authentication.refreshConflicts() } label: {
                         Image(systemName: "arrow.clockwise").frame(width: 20, height: 20)
                     }
                     .buttonStyle(.borderless)
-                    .help("Aggiorna l’elenco dei conflitti")
-                    .accessibilityLabel("Aggiorna conflitti")
+                    .help(tr("Aggiorna l’elenco dei conflitti", "Refresh the conflict list"))
+                    .accessibilityLabel(tr("Aggiorna conflitti", "Refresh conflicts"))
                 }
-                Label("La versione remota è conservata separatamente: nessun file locale viene mai sovrascritto senza una tua scelta.", systemImage: "lock.shield")
+                Label(tr("La versione remota è conservata separatamente: nessun file locale viene mai sovrascritto senza una tua scelta.", "The remote version is kept separately: no local file is ever overwritten without your choice."), systemImage: "lock.shield")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if authentication.conflicts.isEmpty {
                     ContentUnavailableView {
-                        Label("Nessun conflitto aperto", systemImage: "checkmark.seal")
+                        Label(tr("Nessun conflitto aperto", "No open conflicts"), systemImage: "checkmark.seal")
                     } description: {
-                        Text("Se lo stesso file cambia sia sul Mac sia su \(authentication.selectedSite.platformName), potrai scegliere qui quale versione tenere.")
+                        Text(tr("Se lo stesso file cambia sia sul Mac sia su \(authentication.selectedSite.platformName), potrai scegliere qui quale versione tenere.", "If the same file changes both on your Mac and on \(authentication.selectedSite.platformName), you can choose here which version to keep."))
                     }
                     .frame(minHeight: 260)
                     .frame(maxWidth: .infinity)
@@ -81,7 +81,7 @@ private struct ConflictCard: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
-                    Text("Rilevato \(conflict.detectedAt.relativeItalian)")
+                    Text(tr("Rilevato \(conflict.detectedAt.relativeText)", "Detected \(conflict.detectedAt.relativeText)"))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -93,15 +93,15 @@ private struct ConflictCard: View {
                     }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
-                    .help("Mostra la copia locale nel Finder")
-                    .accessibilityLabel("Mostra \(fileName) nel Finder")
+                    .help(tr("Mostra la copia locale nel Finder", "Show the local copy in Finder"))
+                    .accessibilityLabel(tr("Mostra \(fileName) nel Finder", "Show \(fileName) in Finder"))
                 }
             }
             HStack(spacing: 10) {
-                choice(title: "Mantieni la mia", subtitle: "La copia sul Mac resta com’è", systemImage: "laptopcomputer", prominent: false) {
+                choice(title: tr("Mantieni la mia", "Keep mine"), subtitle: tr("La copia sul Mac resta com’è", "The copy on your Mac stays as it is"), systemImage: "laptopcomputer", prominent: false) {
                     resolve(.keepLocal)
                 }
-                choice(title: "Usa la versione remota", subtitle: "Sostituisce la copia locale", systemImage: "icloud.and.arrow.down", prominent: true) {
+                choice(title: tr("Usa la versione remota", "Use the remote version"), subtitle: tr("Sostituisce la copia locale", "Replaces the local copy"), systemImage: "icloud.and.arrow.down", prominent: true) {
                     resolve(.useRemote)
                 }
             }

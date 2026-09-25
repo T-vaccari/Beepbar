@@ -183,22 +183,22 @@ public actor ManualSyncRun {
                         case .transport(let status) where status == 401 || status == 403:
                             throw SyncDownloadError.authorizationRejected(status)
                         case .transport(let status) where status >= 500:
-                            return (item, nil, "Errore del server (\(status)).", status)
+                            return (item, nil, tr("Errore del server (\(status)).", "Server error (\(status))."), status)
                         case .unsupportedFile:
-                            return (item, nil, "Formato non supportato.", nil)
+                            return (item, nil, tr("Formato non supportato.", "Unsupported format."), nil)
                         case .missingURL, .invalidSize:
-                            return (item, nil, "Metadati del file non validi.", nil)
+                            return (item, nil, tr("Metadati del file non validi.", "Invalid file metadata."), nil)
                         case .unsafeURL, .unexpectedRedirect:
-                            return (item, nil, "Indirizzo di download non sicuro.", nil)
+                            return (item, nil, tr("Indirizzo di download non sicuro.", "Unsafe download address."), nil)
                         case .invalidResponse:
-                            return (item, nil, "Risposta di download non valida.", nil)
+                            return (item, nil, tr("Risposta di download non valida.", "Invalid download response."), nil)
                         case .tooLarge:
-                            return (item, nil, "File troppo grande.", nil)
+                            return (item, nil, tr("File troppo grande.", "File too large."), nil)
                         default:
-                            return (item, nil, "Download non riuscito.", nil)
+                            return (item, nil, tr("Download non riuscito.", "Download failed."), nil)
                         }
                     } catch {
-                        return (item, nil, "Impossibile salvare il file.", nil)
+                        return (item, nil, tr("Impossibile salvare il file.", "Could not save the file."), nil)
                     }
                 }
             }
@@ -225,7 +225,7 @@ public actor ManualSyncRun {
                 case nil:
                     failures += 1
                     perCourseFolder[courseID] = Self.courseFolder(for: item.destination)
-                    perCourseFailures[courseID, default: []].append(Self.failedItem(for: item, reason: failureReason ?? "Errore sconosciuto."))
+                    perCourseFailures[courseID, default: []].append(Self.failedItem(for: item, reason: failureReason ?? tr("Errore sconosciuto.", "Unknown error.")))
                     if let serviceStatus {
                         serviceFailures += 1
                         firstServiceStatus = firstServiceStatus ?? serviceStatus

@@ -6,7 +6,7 @@ public enum CourseRenameError: Error, Sendable, Equatable, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .folderAlreadyExists: "Esiste già una cartella con questo nome."
+        case .folderAlreadyExists: tr("Esiste già una cartella con questo nome.", "A folder with this name already exists.")
         }
     }
 }

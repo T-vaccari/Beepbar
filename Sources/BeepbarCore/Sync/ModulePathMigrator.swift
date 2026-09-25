@@ -20,20 +20,20 @@ public enum ModulePathMigrationError: Error, Sendable, Equatable, LocalizedError
 
     public var errorDescription: String? {
         switch self {
-        case .invalidFolder: "Il percorso della cartella non è valido o supera i limiti consentiti."
-        case .unavailableModule: "Il modulo non è più disponibile su Moodle."
-        case .duplicateModule, .duplicateFileID: "Moodle ha restituito identificativi ambigui; aggiorna i contenuti e riprova."
-        case .ownershipMismatch: "Non è possibile attribuire con sicurezza tutti i file a questo modulo."
-        case .destinationOccupied(let path): "La destinazione è già occupata: \(path)."
-        case .trackedPathCollision(let path): "La destinazione è già assegnata a un altro file tracciato: \(path)."
-        case .normalizedPathCollision(let path): "Due file finirebbero nella stessa destinazione: \(path)."
-        case .pendingOperation: "Completa prima le altre operazioni di sincronizzazione."
-        case .openConflict: "Risolvi prima i conflitti aperti per questo modulo."
-        case .pendingRecovery: "Completa il recupero locale prima di modificare le cartelle."
-        case .planChanged: "I contenuti o i file locali sono cambiati dopo l’anteprima. Generane una nuova."
-        case .unresolvedMove: "Lo spostamento non è stato completato. I file non sono stati sovrascritti; riprova il recupero."
-        case .noRule: "Non è presente una regola da eliminare."
-        case .ruleNowPresent: "Il modulo è di nuovo presente su Moodle; aggiorna l’elenco e riprova."
+        case .invalidFolder: tr("Il percorso della cartella non è valido o supera i limiti consentiti.", "The folder path is invalid or exceeds the allowed limits.")
+        case .unavailableModule: tr("Il modulo non è più disponibile su Moodle.", "The module is no longer available on Moodle.")
+        case .duplicateModule, .duplicateFileID: tr("Moodle ha restituito identificativi ambigui; aggiorna i contenuti e riprova.", "Moodle returned ambiguous identifiers; refresh the contents and try again.")
+        case .ownershipMismatch: tr("Non è possibile attribuire con sicurezza tutti i file a questo modulo.", "Not every file can be safely attributed to this module.")
+        case .destinationOccupied(let path): tr("La destinazione è già occupata: \(path).", "The destination is already taken: \(path).")
+        case .trackedPathCollision(let path): tr("La destinazione è già assegnata a un altro file tracciato: \(path).", "The destination is already assigned to another tracked file: \(path).")
+        case .normalizedPathCollision(let path): tr("Due file finirebbero nella stessa destinazione: \(path).", "Two files would end up at the same destination: \(path).")
+        case .pendingOperation: tr("Completa prima le altre operazioni di sincronizzazione.", "Finish the other sync operations first.")
+        case .openConflict: tr("Risolvi prima i conflitti aperti per questo modulo.", "Resolve the open conflicts for this module first.")
+        case .pendingRecovery: tr("Completa il recupero locale prima di modificare le cartelle.", "Finish the local recovery before changing folders.")
+        case .planChanged: tr("I contenuti o i file locali sono cambiati dopo l’anteprima. Generane una nuova.", "The contents or local files changed after the preview. Generate a new one.")
+        case .unresolvedMove: tr("Lo spostamento non è stato completato. I file non sono stati sovrascritti; riprova il recupero.", "The move wasn’t completed. No files were overwritten; retry the recovery.")
+        case .noRule: tr("Non è presente una regola da eliminare.", "There is no rule to remove.")
+        case .ruleNowPresent: tr("Il modulo è di nuovo presente su Moodle; aggiorna l’elenco e riprova.", "The module is back on Moodle; refresh the list and try again.")
         }
     }
 }
@@ -71,7 +71,7 @@ public actor ModulePathMigrator {
             })
             return ModulePathRuleRow(
                 moduleID: module.id,
-                name: module.name.isEmpty ? "Modulo senza nome · ID \(module.id)" : module.name,
+                name: module.name.isEmpty ? tr("Modulo senza nome · ID \(module.id)", "Untitled module · ID \(module.id)") : module.name,
                 moduleType: candidates.first?.moduleType ?? "",
                 exposedFileCount: candidates.count,
                 trackedFileCount: ownedIDs.union(exactUnattributed).count,
@@ -81,7 +81,7 @@ public actor ModulePathMigrator {
         }
         for rule in overrides.values where !availableIDs.contains(rule.moduleID) {
             let count = baselines.values.filter { $0.courseID == courseID && $0.moduleID == rule.moduleID }.count
-            rows.append(ModulePathRuleRow(moduleID: rule.moduleID, name: rule.lastKnownName.isEmpty ? "Modulo non più disponibile · ID \(rule.moduleID)" : rule.lastKnownName, moduleType: "", exposedFileCount: 0, trackedFileCount: count, localFolder: rule.localFolder, isAvailable: false))
+            rows.append(ModulePathRuleRow(moduleID: rule.moduleID, name: rule.lastKnownName.isEmpty ? tr("Modulo non più disponibile · ID \(rule.moduleID)", "Module no longer available · ID \(rule.moduleID)") : rule.lastKnownName, moduleType: "", exposedFileCount: 0, trackedFileCount: count, localFolder: rule.localFolder, isAvailable: false))
         }
         return rows.sorted {
             let order = $0.name.localizedStandardCompare($1.name)
@@ -204,7 +204,7 @@ public actor ModulePathMigrator {
         let matchedOwnerless = candidateIDs.filter { id in baselines[id]?.courseID == nil && baselines[id]?.moduleID == nil }.count
         let ownerlessCount = max(0, try await database.rootUnattributedBaselineCount(rootID: rootID) - matchedOwnerless)
         let fingerprint = Self.fingerprint(rootID: rootID, courseID: courseID, moduleID: moduleID, courseFolder: courseFolder, action: action, oldFolder: override?.localFolder, newFolder: desiredFolder, moduleName: module.name, candidates: module.files, baselines: baselines, files: files, excluded: excluded, ownerlessCount: ownerlessCount, snapshots: snapshots)
-            return ModuleMovePreview(rootID: rootID, courseID: courseID, moduleID: moduleID, action: action, oldFolder: override?.localFolder, newFolder: desiredFolder, lastKnownName: module.name.isEmpty ? "Modulo senza nome · ID \(moduleID)" : module.name, files: files, excludedRemoteIDs: excluded, ownerlessBaselineCount: ownerlessCount, fingerprint: fingerprint)
+            return ModuleMovePreview(rootID: rootID, courseID: courseID, moduleID: moduleID, action: action, oldFolder: override?.localFolder, newFolder: desiredFolder, lastKnownName: module.name, files: files, excludedRemoteIDs: excluded, ownerlessBaselineCount: ownerlessCount, fingerprint: fingerprint)
     }
 
     private static func fingerprint(rootID: UUID, courseID: Int64, moduleID: Int64, courseFolder: String, action: ModuleMoveAction, oldFolder: String?, newFolder: String?, moduleName: String, candidates: [RemoteFileCandidate], baselines: [String: Baseline], files: [ModuleMoveFile], excluded: [String], ownerlessCount: Int, snapshots: [String: FileSnapshotState]) -> String {

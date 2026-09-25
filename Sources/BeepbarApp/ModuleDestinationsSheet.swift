@@ -27,7 +27,7 @@ struct ModuleDestinationsSheet: View {
             Divider()
             Group {
                 if isLoading {
-                    ProgressView("Caricamento moduli Moodle…")
+                    ProgressView(tr("Caricamento moduli Moodle…", "Loading Moodle modules…"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     content
@@ -42,17 +42,17 @@ struct ModuleDestinationsSheet: View {
         .task { await reload() }
         .animation(BeepbarStyle.snappy, value: preview?.moduleID)
         .animation(BeepbarStyle.snappy, value: editingModuleID)
-        .confirmationDialog("Spostare i file del modulo?", isPresented: $showApplyConfirmation, titleVisibility: .visible) {
-            Button("Conferma spostamento") { applyPreview() }
-            Button("Annulla", role: .cancel) {}
+        .confirmationDialog(tr("Spostare i file del modulo?", "Move the module's files?"), isPresented: $showApplyConfirmation, titleVisibility: .visible) {
+            Button(tr("Conferma spostamento", "Confirm move")) { applyPreview() }
+            Button(tr("Annulla", "Cancel"), role: .cancel) {}
         } message: {
-            Text("I file modificati localmente vengono spostati senza essere sovrascritti. Le destinazioni occupate bloccano l’operazione.")
+            Text(tr("I file modificati localmente vengono spostati senza essere sovrascritti. Le destinazioni occupate bloccano l’operazione.", "Locally modified files are moved without being overwritten. Occupied destinations block the operation."))
         }
-        .confirmationDialog("Eliminare questa regola?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
-            Button("Elimina regola", role: .destructive) { deleteRule() }
-            Button("Annulla", role: .cancel) { ruleToDelete = nil }
+        .confirmationDialog(tr("Eliminare questa regola?", "Remove this rule?"), isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+            Button(tr("Elimina regola", "Remove rule"), role: .destructive) { deleteRule() }
+            Button(tr("Annulla", "Cancel"), role: .cancel) { ruleToDelete = nil }
         } message: {
-            Text("I file locali non verranno spostati né eliminati.")
+            Text(tr("I file locali non verranno spostati né eliminati.", "Local files won't be moved or deleted."))
         }
     }
 
@@ -60,7 +60,7 @@ struct ModuleDestinationsSheet: View {
         HStack(spacing: 12) {
             SymbolTile(systemImage: "folder.badge.gearshape", size: 38)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Organizza cartelle").font(.title3.weight(.semibold))
+                Text(tr("Organizza cartelle", "Organize folders")).font(.title3.weight(.semibold))
                 Text(course.displayName)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -77,7 +77,7 @@ struct ModuleDestinationsSheet: View {
                 if let errorMessage {
                     NoticeBanner(text: errorMessage, tint: .red)
                 }
-                Text("Scegli una cartella relativa alla cartella del corso. Senza una regola, i file seguono l’organizzazione di Moodle.")
+                Text(tr("Scegli una cartella relativa alla cartella del corso. Senza una regola, i file seguono l’organizzazione di Moodle.", "Choose a folder relative to the course folder. Without a rule, files follow Moodle's layout."))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -85,9 +85,9 @@ struct ModuleDestinationsSheet: View {
                 if let preview { previewPanel(preview) }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Moduli disponibili").font(.headline)
+                    Text(tr("Moduli disponibili", "Available modules")).font(.headline)
                     if availableRows.isEmpty {
-                        Text("Nessun modulo disponibile.")
+                        Text(tr("Nessun modulo disponibile.", "No modules available."))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .card()
@@ -98,7 +98,7 @@ struct ModuleDestinationsSheet: View {
 
                 if !unavailableRows.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Regole per moduli non più presenti").font(.headline)
+                        Text(tr("Regole per moduli non più presenti", "Rules for modules no longer present")).font(.headline)
                         rowGroup(unavailableRows) { unavailableRow($0) }
                     }
                 }
@@ -128,7 +128,7 @@ struct ModuleDestinationsSheet: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(row.name).lineLimit(2)
                     HStack(spacing: 6) {
-                        Text("\(row.exposedFileCount) file esposti · \(row.trackedFileCount) tracciati")
+                        Text(tr("\(row.exposedFileCount) file esposti · \(row.trackedFileCount) tracciati", "\(englishCount(row.exposedFileCount, "file", "files")) exposed · \(row.trackedFileCount) tracked"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if let localFolder = row.localFolder {
@@ -142,9 +142,9 @@ struct ModuleDestinationsSheet: View {
                 }
                 Spacer(minLength: 8)
                 if let localFolder = row.localFolder {
-                    Menu("Modifica") {
-                        Button("Cambia destinazione…", systemImage: "pencil") { beginEditing(row, folder: localFolder) }
-                        Button("Ripristina layout Moodle", systemImage: "arrow.uturn.backward") {
+                    Menu(tr("Modifica", "Edit")) {
+                        Button(tr("Cambia destinazione…", "Change destination…"), systemImage: "pencil") { beginEditing(row, folder: localFolder) }
+                        Button(tr("Ripristina layout Moodle", "Restore Moodle layout"), systemImage: "arrow.uturn.backward") {
                             requestPreview(for: row, action: .remove, folder: nil)
                         }
                     }
@@ -152,19 +152,19 @@ struct ModuleDestinationsSheet: View {
                     .fixedSize()
                     .disabled(actionsDisabled)
                 } else if editingModuleID != row.moduleID {
-                    Button("Personalizza") { beginEditing(row, folder: "") }
+                    Button(tr("Personalizza", "Customize")) { beginEditing(row, folder: "") }
                         .disabled(actionsDisabled)
                 }
             }
             if editingModuleID == row.moduleID {
                 HStack(spacing: 8) {
-                    TextField("Cartella, ad esempio materiali/slide", text: $folder)
+                    TextField(tr("Cartella, ad esempio materiali/slide", "Folder, for example materials/slides"), text: $folder)
                         .textFieldStyle(.roundedBorder)
                         .focused($fieldFocused)
                         .onSubmit { submitPreview(for: row) }
-                    Button("Annulla") { editingModuleID = nil; preview = nil }
+                    Button(tr("Annulla", "Cancel")) { editingModuleID = nil; preview = nil }
                         .disabled(isWorking)
-                    Button("Anteprima") { submitPreview(for: row) }
+                    Button(tr("Anteprima", "Preview")) { submitPreview(for: row) }
                         .buttonStyle(.borderedProminent)
                         .disabled(isWorking || folder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -179,12 +179,12 @@ struct ModuleDestinationsSheet: View {
             SymbolTile(systemImage: "questionmark.folder", tint: .gray, size: 28, filled: false)
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.name).foregroundStyle(.secondary)
-                Text("\(row.trackedFileCount) file tracciati · \(row.localFolder ?? "")")
+                Text(tr("\(row.trackedFileCount) file tracciati · \(row.localFolder ?? "")", "\(englishCount(row.trackedFileCount, "tracked file", "tracked files")) · \(row.localFolder ?? "")"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Elimina regola", role: .destructive) {
+            Button(tr("Elimina regola", "Remove rule"), role: .destructive) {
                 ruleToDelete = row
                 showDeleteConfirmation = true
             }
@@ -198,24 +198,24 @@ struct ModuleDestinationsSheet: View {
                 Image(systemName: "arrow.right.doc.on.clipboard")
                     .font(.title3)
                     .foregroundStyle(.tint)
-                Text("Anteprima · \(preview.lastKnownName)").font(.headline)
+                Text(tr("Anteprima · \(previewName(preview))", "Preview · \(previewName(preview))")).font(.headline)
             }
             VStack(alignment: .leading, spacing: 4) {
-                Label("\(preview.changedFileCount) file da spostare; \(preview.localModifiedCount) con modifiche locali preservate.", systemImage: "doc.on.doc")
+                Label(tr("\(preview.changedFileCount) file da spostare; \(preview.localModifiedCount) con modifiche locali preservate.", "\(englishCount(preview.changedFileCount, "file", "files")) to move; \(preview.localModifiedCount) with local changes preserved."), systemImage: "doc.on.doc")
                 if !preview.excludedRemoteIDs.isEmpty {
-                    Label("\(preview.excludedRemoteIDs.count) file tracciati ma non esposti da Moodle restano nella posizione attuale.", systemImage: "pin")
+                    Label(tr("\(preview.excludedRemoteIDs.count) file tracciati ma non esposti da Moodle restano nella posizione attuale.", "Left where they are: \(englishCount(preview.excludedRemoteIDs.count, "tracked file", "tracked files")) not exposed by Moodle."), systemImage: "pin")
                 }
                 if preview.ownerlessBaselineCount > 0 {
-                    Label("\(preview.ownerlessBaselineCount) file storici senza modulo attribuibile non vengono spostati.", systemImage: "clock.arrow.circlepath")
+                    Label(tr("\(preview.ownerlessBaselineCount) file storici senza modulo attribuibile non vengono spostati.", "Not moved: \(englishCount(preview.ownerlessBaselineCount, "older file", "older files")) with no attributable module."), systemImage: "clock.arrow.circlepath")
                 }
             }
             .font(.callout)
             .foregroundStyle(.secondary)
             HStack {
                 Spacer()
-                Button("Scarta") { self.preview = nil }
+                Button(tr("Scarta", "Discard")) { self.preview = nil }
                     .disabled(isWorking)
-                Button(isWorking ? "Applicazione…" : "Conferma anteprima") { showApplyConfirmation = true }
+                Button(isWorking ? tr("Applicazione…", "Applying…") : tr("Conferma anteprima", "Confirm preview")) { showApplyConfirmation = true }
                     .buttonStyle(.borderedProminent)
                     .disabled(actionsDisabled)
             }
@@ -226,11 +226,16 @@ struct ModuleDestinationsSheet: View {
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
+    // The name is stored as Moodle gave it, possibly empty, so the placeholder follows the language.
+    private func previewName(_ preview: ModuleMovePreview) -> String {
+        preview.lastKnownName.isEmpty ? tr("Modulo senza nome · ID \(preview.moduleID)", "Untitled module · ID \(preview.moduleID)") : preview.lastKnownName
+    }
+
     private var footer: some View {
         HStack {
             if isWorking { ProgressView().controlSize(.small) }
             Spacer()
-            Button("Chiudi") { dismiss() }
+            Button(tr("Chiudi", "Close")) { dismiss() }
                 .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 20)
