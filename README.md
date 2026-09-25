@@ -11,6 +11,11 @@ Has another syncing app ever **overwritten your annotated slides**? Tired of **r
 
 Beepbar solves exactly that. It never overwrites your local work: take notes directly on a slide PDF, or edit a file on iPad/Mac after downloading it, and that copy is preserved instead of being silently replaced when your university platform publishes an update. Built specifically for Apple Silicon, it stays native and ultra-lightweight in the background.
 
+<p align="center">
+  <img src="docs/images/courses.png" width="720" alt="The Beepbar window on the Corsi tab: an 'all up to date' status with 12 new and 4 updated files, and a list of twelve courses, five of them turned on, each synced into its own folder.">
+</p>
+<p align="center"><sub>Pick the courses to sync; each one lands in its own folder. (The app's interface is in Italian.)</sub></p>
+
 ## TL;DR / Install
 
 1. [Download Beepbar.dmg](https://github.com/tommaso-vaccari/Beepbar/releases/latest/download/00-Beepbar.dmg), double-click it, then drag Beepbar into Applications. This link always points to the newest release, built automatically from `main`.
@@ -28,10 +33,15 @@ If you're updating from an older version that stored your token in the macOS Key
 ## How to Use It
 
 - **Menu bar icon**: click it anytime for sync status and a one-click action (sign in, resolve conflicts, sync now). Open the full window with **"Apri Beepbar…"**.
-- **Pick your courses**: in Impostazioni, load your courses and toggle which ones to sync. Each gets its own subfolder inside the root you chose during setup — rename any of them from the same screen.
-- **Sync**: run it manually with **"Sincronizza ora"**, or turn on **"Sincronizzazione automatica"** in Impostazioni and pick an interval (from every 30 minutes to once a day).
+- **Pick your courses**: in **Corsi**, toggle which courses to sync. Each gets its own subfolder inside the root you chose during setup — rename any of them from its **⋯** menu.
+- **Sync**: run it manually with **"Sincronizza ora"**, or pick how often to check automatically from the menu under that button (or **"Sincronizzazione automatica"** in Impostazioni), from every 30 minutes to 3 times a day.
+- **See what arrived**: after each sync, **Attività** lists the new and updated files, course by course.
 - **Resolve conflicts**: when both a local and remote version of a file changed, it shows up in the **Conflitti** section (with a badge count in the menu) — see [How the three-way sync works](#how-the-three-way-sync-works) for what to expect there.
 - **Check for updates**: opt in from Impostazioni — see [Auto-updates](#auto-updates).
+
+<p align="center">
+  <img src="docs/images/activity.png" width="640" alt="The Beepbar Attività tab after a sync: 12 new, 4 updated, 1 of your edits kept, 0 not updated, with the files that arrived in each course.">
+</p>
 
 ## Why Beepbar
 
