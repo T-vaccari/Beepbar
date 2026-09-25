@@ -161,6 +161,7 @@ public actor SyncCoordinator {
             }
             var deferredIDs: Set<String> = []
             var deferredLegacyIDs: Set<String> = []
+            var baselineIDsByPath: [RelativePath: [String]]?
             var overridesByCourse: [Int64: [Int64: ModulePathOverride]] = [:]
             for target in targets {
                 overridesByCourse[target.courseID] = try await database.modulePathOverrides(rootID: rootID, courseID: target.courseID)
@@ -168,9 +169,14 @@ public actor SyncCoordinator {
             for (index, files) in fetched.sorted(by: { $0.0 < $1.0 }) {
                 for file in files where currentBaselines[file.id] == nil {
                     let preferred = try LocalPathPolicy.destination(courseFolder: targets[index].localFolder, file: file)
-                    let legacyIDs = currentBaselines.compactMap { remoteID, baseline in
-                        baseline.relativePath == preferred && Self.isLegacyRemoteID(remoteID, for: file) ? remoteID : nil
+                    if baselineIDsByPath == nil {
+                        var indexed: [RelativePath: [String]] = [:]
+                        for (remoteID, baseline) in currentBaselines {
+                            indexed[baseline.relativePath, default: []].append(remoteID)
+                        }
+                        baselineIDsByPath = indexed
                     }
+                    let legacyIDs = (baselineIDsByPath?[preferred] ?? []).filter { Self.isLegacyRemoteID($0, for: file) }
                     guard legacyIDs.count == 1, let legacyID = legacyIDs.first else { continue }
                     guard let migrated = try await database.migrateLegacyBaseline(rootID: rootID, legacyRemoteID: legacyID, remoteID: file.id, courseID: file.courseID, moduleID: file.moduleID) else {
                         deferredIDs.insert(file.id)
@@ -179,6 +185,7 @@ public actor SyncCoordinator {
                     }
                     currentBaselines.removeValue(forKey: legacyID)
                     currentBaselines[file.id] = migrated
+                    baselineIDsByPath?[preferred]?.removeAll { $0 == legacyID }
                 }
             }
             for file in allFiles where !file.moduleName.isEmpty && overridesByCourse[file.courseID]?[file.moduleID] != nil {
