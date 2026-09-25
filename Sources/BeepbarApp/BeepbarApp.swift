@@ -104,12 +104,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.authentication = authentication
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
-        let image = NSImage(systemSymbolName: authentication.menuBarSymbol, accessibilityDescription: "Beepbar")
-        image?.isTemplate = true
-        statusItem.button?.image = image
+        Self.setSymbol(authentication.menuBarSymbol, on: statusItem)
+        // Updates arrive from the main actor (see `onMenuBarSymbolChange`), never from an AppKit
+        // callback into this class.
+        authentication.onMenuBarSymbolChange = { [statusItem] symbol in Self.setSymbol(symbol, on: statusItem) }
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+    }
+
+    @MainActor private static func setSymbol(_ symbol: String, on statusItem: NSStatusItem) {
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Beepbar")
+        image?.isTemplate = true
+        statusItem.button?.image = image
     }
 
     nonisolated func menuNeedsUpdate(_ menu: NSMenu) {

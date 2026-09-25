@@ -256,6 +256,11 @@ struct MenuBarSnapshot: Sendable {
     // `didSet { refreshMenuBarSnapshot() }` to that property too, or the menu bar will silently
     // go stale instead of crashing loudly.
     private(set) nonisolated(unsafe) var menuBarSnapshot = MenuBarSnapshot(title: "", detail: "", actionTitle: "")
+    /// Pushes the status item's icon from the main actor whenever `menuBarSymbol` changes, so
+    /// StatusItemController never has to read it from an AppKit callback (same reason as
+    /// `menuBarSnapshot`). Set once by StatusItemController's `@MainActor` init.
+    var onMenuBarSymbolChange: (@MainActor (String) -> Void)?
+    private var lastMenuBarSymbol: String?
 
     @Published private(set) var isAuthenticating = false
     @Published private(set) var isVerifying = false
@@ -524,8 +529,14 @@ struct MenuBarSnapshot: Sendable {
         }
     }
 
+    /// Lets the icon itself say whether a sync is running or something needs attention, since the
+    /// menu closes as soon as "Sincronizza ora" is clicked.
     var menuBarSymbol: String {
-        "arrow.triangle.2.circlepath"
+        switch syncState {
+        case .checking, .syncing, .cancelling: "arrow.down.circle"
+        case .conflicts, .partial, .failed, .recoveryBlocked, .loginRequired, .needsFolder: "exclamationmark.triangle"
+        case .starting, .readyUnchecked, .synced: "arrow.triangle.2.circlepath"
+        }
     }
 
     var menuBarTitle: String {
@@ -550,6 +561,11 @@ struct MenuBarSnapshot: Sendable {
             detail: menuBarDetail,
             actionTitle: menuBarActionTitle
         )
+        let symbol = menuBarSymbol
+        if symbol != lastMenuBarSymbol {
+            lastMenuBarSymbol = symbol
+            onMenuBarSymbolChange?(symbol)
+        }
     }
 
     /// One short line for the status menu; the full sentences live in the window.
@@ -800,6 +816,7 @@ struct MenuBarSnapshot: Sendable {
         let operationID = UUID()
         activeOperationID = operationID
         setSyncState(.checking)
+        Task { await notificationCoordinator.requestAuthorizationIfNeeded() }
         syncTask = Task { [weak self] in
             do {
                 guard let self else { return }
@@ -1451,7 +1468,11 @@ struct MenuBarSnapshot: Sendable {
     private func completeSync(_ operationID: UUID, summary: SyncProgress, automatic: Bool) async {
         guard activeOperationID == operationID else { return }
         await finishReconciliation(progress: summary)
-        if automatic { await notificationCoordinator.notifyAutomaticRun(installed: summary.installed, conflicts: conflicts, failures: summary.failures) }
+        if automatic {
+            await notificationCoordinator.notifyAutomaticRun(installed: summary.installed, conflicts: conflicts, failures: summary.failures)
+        } else {
+            await notificationCoordinator.notifyManualRun(installed: summary.installed)
+        }
         if summary.failures == 0 { notificationCoordinator.clearFailure() }
         BeepbarLog.sync.notice("Synchronization completed automatic=\(automatic, privacy: .public) total=\(summary.total, privacy: .public) installed=\(summary.installed, privacy: .public) conflicts=\(summary.conflicts, privacy: .public) failures=\(summary.failures, privacy: .public)")
         configureBackgroundScheduler()
@@ -1684,6 +1705,17 @@ private enum AutomaticNotificationIssue: String {
                 await send(center, title: installed == 1 ? "Nuovo materiale disponibile" : "Nuovi materiali disponibili", body: SyncCopy.newMaterialsNotificationBody(installed), identifier: "beepbar-new-files-\(UUID().uuidString)")
             }
         }
+    }
+
+    /// A manual run started from the menu leaves no menu open to show its result, so say when new
+    /// materials arrived. Nothing new stays silent: the icon returning to normal is enough.
+    /// Without a notification delegate, macOS drops the banner while Beepbar's window is in front.
+    func notifyManualRun(installed: Int) async {
+        guard installed > 0 else { return }
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .authorized else { return }
+        await send(center, title: installed == 1 ? "Nuovo materiale disponibile" : "Nuovi materiali disponibili", body: SyncCopy.newMaterialsNotificationBody(installed), identifier: "beepbar-new-files-\(UUID().uuidString)")
     }
 
     func notify(issue: AutomaticNotificationIssue) async {
