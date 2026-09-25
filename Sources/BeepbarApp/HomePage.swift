@@ -54,7 +54,7 @@ struct HomePage: View {
                 refreshButton
             }
             if let error = authentication.courseLoadError {
-                NoticeBanner(text: error, systemImage: "wifi.exclamationmark", tint: .red)
+                NoticeBanner(text: error.text, systemImage: "wifi.exclamationmark", tint: .red)
             }
             if authentication.courses.isEmpty {
                 emptyCourses

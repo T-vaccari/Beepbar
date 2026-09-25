@@ -43,6 +43,26 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// "1 file" / "3 files". Italian often needs no branch ("file" is invariable), English does.
+public func englishCount(_ count: Int, _ one: String, _ many: String) -> String {
+    "\(count) \(count == 1 ? one : many)"
+}
+
+/// Text that has to outlive the moment it was produced (stored errors, failure states): both
+/// variants are kept so it still follows a later language switch instead of freezing in the
+/// language that was active when it was stored.
+public struct BilingualText: Equatable, Sendable {
+    public let italian: String
+    public let english: String
+
+    public init(_ italian: String, _ english: String) {
+        self.italian = italian
+        self.english = english
+    }
+
+    public var text: String { tr(italian, english) }
+}
+
 /// Picks the variant for `AppLanguage.current`. Both are written at the call site so every phrase
 /// sits next to its translation.
 public func tr(_ italian: String, _ english: String) -> String {

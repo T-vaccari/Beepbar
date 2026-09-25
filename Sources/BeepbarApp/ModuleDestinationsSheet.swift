@@ -128,7 +128,7 @@ struct ModuleDestinationsSheet: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(row.name).lineLimit(2)
                     HStack(spacing: 6) {
-                        Text(tr("\(row.exposedFileCount) file esposti · \(row.trackedFileCount) tracciati", "\(row.exposedFileCount) files exposed · \(row.trackedFileCount) tracked"))
+                        Text(tr("\(row.exposedFileCount) file esposti · \(row.trackedFileCount) tracciati", "\(englishCount(row.exposedFileCount, "file", "files")) exposed · \(row.trackedFileCount) tracked"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if let localFolder = row.localFolder {
@@ -179,7 +179,7 @@ struct ModuleDestinationsSheet: View {
             SymbolTile(systemImage: "questionmark.folder", tint: .gray, size: 28, filled: false)
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.name).foregroundStyle(.secondary)
-                Text(tr("\(row.trackedFileCount) file tracciati · \(row.localFolder ?? "")", "\(row.trackedFileCount) tracked files · \(row.localFolder ?? "")"))
+                Text(tr("\(row.trackedFileCount) file tracciati · \(row.localFolder ?? "")", "\(englishCount(row.trackedFileCount, "tracked file", "tracked files")) · \(row.localFolder ?? "")"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -198,15 +198,15 @@ struct ModuleDestinationsSheet: View {
                 Image(systemName: "arrow.right.doc.on.clipboard")
                     .font(.title3)
                     .foregroundStyle(.tint)
-                Text(tr("Anteprima · \(preview.lastKnownName)", "Preview · \(preview.lastKnownName)")).font(.headline)
+                Text(tr("Anteprima · \(previewName(preview))", "Preview · \(previewName(preview))")).font(.headline)
             }
             VStack(alignment: .leading, spacing: 4) {
-                Label(tr("\(preview.changedFileCount) file da spostare; \(preview.localModifiedCount) con modifiche locali preservate.", "\(preview.changedFileCount) files to move; \(preview.localModifiedCount) with local changes preserved."), systemImage: "doc.on.doc")
+                Label(tr("\(preview.changedFileCount) file da spostare; \(preview.localModifiedCount) con modifiche locali preservate.", "\(englishCount(preview.changedFileCount, "file", "files")) to move; \(preview.localModifiedCount) with local changes preserved."), systemImage: "doc.on.doc")
                 if !preview.excludedRemoteIDs.isEmpty {
-                    Label(tr("\(preview.excludedRemoteIDs.count) file tracciati ma non esposti da Moodle restano nella posizione attuale.", "\(preview.excludedRemoteIDs.count) files tracked but not exposed by Moodle stay where they are."), systemImage: "pin")
+                    Label(tr("\(preview.excludedRemoteIDs.count) file tracciati ma non esposti da Moodle restano nella posizione attuale.", "Left where they are: \(englishCount(preview.excludedRemoteIDs.count, "tracked file", "tracked files")) not exposed by Moodle."), systemImage: "pin")
                 }
                 if preview.ownerlessBaselineCount > 0 {
-                    Label(tr("\(preview.ownerlessBaselineCount) file storici senza modulo attribuibile non vengono spostati.", "\(preview.ownerlessBaselineCount) older files with no attributable module aren't moved."), systemImage: "clock.arrow.circlepath")
+                    Label(tr("\(preview.ownerlessBaselineCount) file storici senza modulo attribuibile non vengono spostati.", "Not moved: \(englishCount(preview.ownerlessBaselineCount, "older file", "older files")) with no attributable module."), systemImage: "clock.arrow.circlepath")
                 }
             }
             .font(.callout)
@@ -224,6 +224,11 @@ struct ModuleDestinationsSheet: View {
         .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: BeepbarStyle.cardRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: BeepbarStyle.cardRadius, style: .continuous).strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 0.5))
         .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    // The name is stored as Moodle gave it, possibly empty, so the placeholder follows the language.
+    private func previewName(_ preview: ModuleMovePreview) -> String {
+        preview.lastKnownName.isEmpty ? tr("Modulo senza nome · ID \(preview.moduleID)", "Untitled module · ID \(preview.moduleID)") : preview.lastKnownName
     }
 
     private var footer: some View {

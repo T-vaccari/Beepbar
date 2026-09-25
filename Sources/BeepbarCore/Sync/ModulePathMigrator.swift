@@ -204,7 +204,7 @@ public actor ModulePathMigrator {
         let matchedOwnerless = candidateIDs.filter { id in baselines[id]?.courseID == nil && baselines[id]?.moduleID == nil }.count
         let ownerlessCount = max(0, try await database.rootUnattributedBaselineCount(rootID: rootID) - matchedOwnerless)
         let fingerprint = Self.fingerprint(rootID: rootID, courseID: courseID, moduleID: moduleID, courseFolder: courseFolder, action: action, oldFolder: override?.localFolder, newFolder: desiredFolder, moduleName: module.name, candidates: module.files, baselines: baselines, files: files, excluded: excluded, ownerlessCount: ownerlessCount, snapshots: snapshots)
-            return ModuleMovePreview(rootID: rootID, courseID: courseID, moduleID: moduleID, action: action, oldFolder: override?.localFolder, newFolder: desiredFolder, lastKnownName: module.name.isEmpty ? tr("Modulo senza nome · ID \(moduleID)", "Untitled module · ID \(moduleID)") : module.name, files: files, excludedRemoteIDs: excluded, ownerlessBaselineCount: ownerlessCount, fingerprint: fingerprint)
+            return ModuleMovePreview(rootID: rootID, courseID: courseID, moduleID: moduleID, action: action, oldFolder: override?.localFolder, newFolder: desiredFolder, lastKnownName: module.name, files: files, excludedRemoteIDs: excluded, ownerlessBaselineCount: ownerlessCount, fingerprint: fingerprint)
     }
 
     private static func fingerprint(rootID: UUID, courseID: Int64, moduleID: Int64, courseFolder: String, action: ModuleMoveAction, oldFolder: String?, newFolder: String?, moduleName: String, candidates: [RemoteFileCandidate], baselines: [String: Baseline], files: [ModuleMoveFile], excluded: [String], ownerlessCount: Int, snapshots: [String: FileSnapshotState]) -> String {

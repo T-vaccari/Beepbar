@@ -13,7 +13,7 @@ enum AppFailure: Equatable {
     case incompatibleResponse
     case credentialUnavailable
     case partialSync
-    case local(String)
+    case local(BilingualText)
 
     var title: String {
         switch self {
@@ -47,7 +47,7 @@ enum AppFailure: Equatable {
         case .incompatibleResponse: tr("La piattaforma ha restituito una risposta inattesa. Riprova più tardi.", "The platform returned an unexpected response. Try again later.")
         case .credentialUnavailable: tr("Beepbar non riesce a salvare o leggere la credenziale locale. Riprova più tardi.", "Beepbar can't save or read the local credential. Try again later.")
         case .partialSync: tr("Alcuni materiali non sono stati aggiornati. I file esistenti sono al sicuro.", "Some materials weren't updated. Your existing files are safe.")
-        case .local(let message): message
+        case .local(let message): message.text
         }
     }
 }
@@ -268,7 +268,7 @@ struct MenuBarSnapshot: Sendable {
     @Published private(set) var isAuthenticating = false
     @Published private(set) var isVerifying = false
     @Published private(set) var isLoadingCourses = false
-    @Published private(set) var courseLoadError: String?
+    @Published private(set) var courseLoadError: BilingualText?
     @Published private(set) var courses: [RemoteCourseSummary] = [] {
         didSet { defaultCourseFolders = Self.defaultFolders(for: courses) }
     }
@@ -428,7 +428,7 @@ struct MenuBarSnapshot: Sendable {
                 BeepbarLog.lifecycle.notice("Bootstrap completed recoveryBlocked=\(result.recoveryBlocked, privacy: .public)")
             } catch {
                 BeepbarLog.lifecycle.error("Bootstrap failed errorType=\(String(reflecting: type(of: error)), privacy: .public)")
-                self?.setSyncState(.failed(.local(tr("Impossibile preparare lo stato locale. Riapri Beepbar.", "Couldn't prepare the local state. Reopen Beepbar."))))
+                self?.setSyncState(.failed(.local(BilingualText("Impossibile preparare lo stato locale. Riapri Beepbar.", "Couldn't prepare the local state. Reopen Beepbar."))))
             }
         }
     }
@@ -551,7 +551,9 @@ struct MenuBarSnapshot: Sendable {
 
     /// Lets the icon itself say whether a sync is running or something needs attention, since the
     /// menu closes as soon as "Sincronizza ora" is clicked.
-    var menuBarSymbol: String {
+    var menuBarSymbol: String { Self.menuBarSymbol(for: syncState) }
+
+    nonisolated static func menuBarSymbol(for syncState: AppSyncState) -> String {
         switch syncState {
         case .checking, .syncing, .cancelling: "arrow.down.circle"
         case .conflicts, .partial, .failed, .recoveryBlocked, .loginRequired, .needsFolder: "exclamationmark.triangle"
@@ -610,7 +612,7 @@ struct MenuBarSnapshot: Sendable {
 
     nonisolated static func progressDetail(_ progress: SyncProgress) -> String? {
         guard progress.total > 0 else { return nil }
-        return tr("\(progress.completed) di \(progress.total) file", "\(progress.completed) of \(progress.total) files")
+        return tr("\(progress.completed) di \(progress.total) file", "\(progress.completed) of \(englishCount(progress.total, "file", "files"))")
     }
 
     private var menuBarAction: MenuBarAction {
@@ -748,7 +750,7 @@ struct MenuBarSnapshot: Sendable {
                 await self.restorePersistedSyncState()
                 self.configureBackgroundScheduler()
             } catch {
-                self?.setSyncState(.failed(.local(tr("Non è stato possibile usare questa cartella. Scegline un'altra.", "This folder couldn't be used. Choose another one."))))
+                self?.setSyncState(.failed(.local(BilingualText("Non è stato possibile usare questa cartella. Scegline un'altra.", "This folder couldn't be used. Choose another one."))))
             }
         }
     }
@@ -760,6 +762,9 @@ struct MenuBarSnapshot: Sendable {
         Self.defaults.set(newLanguage.rawValue, forKey: Self.languageKey)
         // The menu is drawn from a snapshot, so it has to be rebuilt in the new language too.
         refreshMenuBarSnapshot()
+        // Inline rename errors come from Core already resolved; they're transient, so drop them
+        // rather than leave them in the old language.
+        courseRenameErrors = [:]
     }
 
     func completeOnboarding() {
@@ -1039,7 +1044,7 @@ struct MenuBarSnapshot: Sendable {
             } catch let error as CredentialStorageError {
                 await self?.handleCredentialStorageError(error)
             } catch {
-                self?.setSyncState(.failed(.local(tr("Non è stato possibile verificare la piattaforma. Riprova più tardi.", "The platform couldn't be verified. Try again later."))))
+                self?.setSyncState(.failed(.local(BilingualText("Non è stato possibile verificare la piattaforma. Riprova più tardi.", "The platform couldn't be verified. Try again later."))))
             }
         }
     }
@@ -1062,14 +1067,14 @@ struct MenuBarSnapshot: Sendable {
                 if error == .invalidToken {
                     await self.expireCredential()
                 } else if error == .network(.timedOut) {
-                    self.courseLoadError = tr("\(self.selectedSite.platformName) non risponde. Riprova.", "\(self.selectedSite.platformName) isn't responding. Try again.")
+                    self.courseLoadError = BilingualText("\(self.selectedSite.platformName) non risponde. Riprova.", "\(self.selectedSite.platformName) isn't responding. Try again.")
                 } else {
-                    self.courseLoadError = tr("Impossibile aggiornare i corsi da \(self.selectedSite.platformName). Riprova.", "Couldn't refresh courses from \(self.selectedSite.platformName). Try again.")
+                    self.courseLoadError = BilingualText("Impossibile aggiornare i corsi da \(self.selectedSite.platformName). Riprova.", "Couldn't refresh courses from \(self.selectedSite.platformName). Try again.")
                 }
             } catch let error as CredentialStorageError {
                 await self?.handleCredentialStorageError(error)
             } catch {
-                self?.courseLoadError = tr("Impossibile aggiornare i corsi. Riprova.", "Couldn't refresh courses. Try again.")
+                self?.courseLoadError = BilingualText("Impossibile aggiornare i corsi. Riprova.", "Couldn't refresh courses. Try again.")
             }
         }
     }
@@ -1503,7 +1508,7 @@ struct MenuBarSnapshot: Sendable {
         if automatic {
             await notificationCoordinator.notifyAutomaticRun(installed: summary.installed, conflicts: conflicts, failures: summary.failures)
         } else {
-            await notificationCoordinator.notifyManualRun(installed: summary.installed)
+            await notificationCoordinator.notifyManualRun(added: summary.added)
         }
         if summary.failures == 0 { notificationCoordinator.clearFailure() }
         BeepbarLog.sync.notice("Synchronization completed automatic=\(automatic, privacy: .public) total=\(summary.total, privacy: .public) installed=\(summary.installed, privacy: .public) conflicts=\(summary.conflicts, privacy: .public) failures=\(summary.failures, privacy: .public)")
@@ -1521,7 +1526,7 @@ struct MenuBarSnapshot: Sendable {
     /// A manual sync found the folder busy with a rename, a module move or a conflict being resolved.
     private func busySync(_ operationID: UUID) {
         guard activeOperationID == operationID else { return }
-        setSyncState(.failed(.local(tr("Un'altra operazione è in corso sulla cartella. Riprova tra poco.", "Another operation is running on the folder. Try again shortly."))))
+        setSyncState(.failed(.local(BilingualText("Un'altra operazione è in corso sulla cartella. Riprova tra poco.", "Another operation is running on the folder. Try again shortly."))))
         endOperation(operationID)
     }
 
@@ -1742,12 +1747,12 @@ private enum AutomaticNotificationIssue: String {
     /// A manual run started from the menu leaves no menu open to show its result, so say when new
     /// materials arrived. Nothing new stays silent: the icon returning to normal is enough.
     /// Without a notification delegate, macOS drops the banner while Beepbar's window is in front.
-    func notifyManualRun(installed: Int) async {
-        guard installed > 0 else { return }
+    func notifyManualRun(added: Int) async {
+        guard added > 0 else { return }
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized else { return }
-        await send(center, title: installed == 1 ? tr("Nuovo materiale disponibile", "New material available") : tr("Nuovi materiali disponibili", "New materials available"), body: SyncCopy.newMaterialsNotificationBody(installed), identifier: "beepbar-new-files-\(UUID().uuidString)")
+        await send(center, title: added == 1 ? tr("Nuovo materiale disponibile", "New material available") : tr("Nuovi materiali disponibili", "New materials available"), body: SyncCopy.newMaterialsNotificationBody(added), identifier: "beepbar-new-files-\(UUID().uuidString)")
     }
 
     func notify(issue: AutomaticNotificationIssue) async {
