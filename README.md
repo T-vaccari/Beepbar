@@ -12,7 +12,7 @@ Has another syncing app ever **overwritten your annotated slides**? Tired of **r
 Beepbar solves exactly that. It never overwrites your local work: take notes directly on a slide PDF, or edit a file on iPad/Mac after downloading it, and that copy is preserved instead of being silently replaced when your university platform publishes an update. Built specifically for Apple Silicon, it stays native and ultra-lightweight in the background.
 
 <p align="center">
-  <img src="docs/images/courses.png" width="720" alt="The Beepbar window on the Corsi tab: an 'all up to date' status with 12 new and 4 updated files, and a list of twelve courses, five of them turned on, each synced into its own folder.">
+  <img src="docs/images/courses.png" width="730" alt="The Beepbar window on the Corsi tab: an 'all up to date' status with 12 new and 4 updated files, and the course list, with five of twelve courses turned on, each synced into its own folder.">
 </p>
 <p align="center"><sub>Pick the courses to sync; each one lands in its own folder. (The app's interface is in Italian.)</sub></p>
 
@@ -40,7 +40,7 @@ If you're updating from an older version that stored your token in the macOS Key
 - **Check for updates**: opt in from Impostazioni — see [Auto-updates](#auto-updates).
 
 <p align="center">
-  <img src="docs/images/activity.png" width="640" alt="The Beepbar Attività tab after a sync: 12 new, 4 updated, 1 of your edits kept, 0 not updated, with the files that arrived in each course.">
+  <img src="docs/images/activity.png" width="730" alt="The Beepbar Attività tab after a sync: 12 new, 4 updated, 1 of your edits kept, 0 not updated, with the files that arrived in each course.">
 </p>
 
 ## Why Beepbar
