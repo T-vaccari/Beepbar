@@ -200,6 +200,61 @@ public actor SyncDatabase {
         }
     }
 
+    /// Where Moodle placed each tracked file when it was last seen, keyed by remote id. Rows
+    /// written before this was recorded (every baseline from an older version) have no entry.
+    public func remotePlacements(rootID: UUID) throws -> [String: RemotePlacement] {
+        try withStatement("SELECT remote_id, placement_section, placement_module, placement_single FROM items WHERE root_id = ? AND placement_section IS NOT NULL AND placement_module IS NOT NULL AND placement_single IS NOT NULL") { statement in
+            try bind(rootID.uuidString, to: statement, index: 1)
+            var values: [String: RemotePlacement] = [:]
+            while try stepRow(statement) {
+                guard let remoteID = text(statement, 0), let section = text(statement, 1), let module = text(statement, 2) else { throw SyncDatabaseError.execution }
+                values[remoteID] = RemotePlacement(sectionName: section, moduleName: module, isSingleFileResource: sqlite3_column_int64(statement, 3) != 0)
+            }
+            return values
+        }
+    }
+
+    /// Stores the Moodle placement of tracked files in one transaction. With `onlyIfMissing`, a
+    /// placement already recorded is kept: that is how files downloaded by this run, and every
+    /// baseline from an older version, get their first placement without hiding a move.
+    public func recordRemotePlacements(rootID: UUID, _ placements: [String: RemotePlacement], onlyIfMissing: Bool) throws {
+        guard !placements.isEmpty else { return }
+        let sql = "UPDATE items SET placement_section = ?, placement_module = ?, placement_single = ? WHERE root_id = ? AND remote_id = ?" + (onlyIfMissing ? " AND placement_section IS NULL" : "")
+        try execute("BEGIN IMMEDIATE")
+        do {
+            for (remoteID, placement) in placements {
+                try withStatement(sql) { statement in
+                    try bindPlacement(placement, to: statement, from: 1)
+                    try bind(rootID.uuidString, to: statement, index: 4)
+                    try bind(remoteID, to: statement, index: 5)
+                    try stepDone(statement)
+                }
+            }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
+
+    /// Records that a tracked file now lives at `newPath` because Moodle moved it, together with
+    /// the placement that caused the move. Returns false, changing nothing, when the baseline is no
+    /// longer at `oldPath`.
+    public func commitRemoteMove(rootID: UUID, remoteID: String, from oldPath: RelativePath, to newPath: RelativePath, placement: RemotePlacement) throws -> Bool {
+        try withStatement("UPDATE items SET relative_path = ?, placement_section = ?, placement_module = ?, placement_single = ? WHERE root_id = ? AND remote_id = ? AND relative_path = ?") { statement in
+            try bind(newPath.value, to: statement, index: 1)
+            try bindPlacement(placement, to: statement, from: 2)
+            try bind(rootID.uuidString, to: statement, index: 5)
+            try bind(remoteID, to: statement, index: 6)
+            try bind(oldPath.value, to: statement, index: 7)
+            try stepDone(statement)
+            return sqlite3_changes(database) == 1
+        }
+    }
+
+    private func bindPlacement(_ placement: RemotePlacement, to statement: OpaquePointer, from index: Int32) throws {
+        try bind(placement.sectionName, to: statement, index: index)
+        try bind(placement.moduleName, to: statement, index: index + 1)
+        guard sqlite3_bind_int64(statement, index + 2, placement.isSingleFileResource ? 1 : 0) == SQLITE_OK else { throw SyncDatabaseError.execution }
+    }
+
     public func beginModuleMove(_ move: PendingModuleMove) throws {
         try execute("BEGIN IMMEDIATE")
         do {
@@ -662,6 +717,12 @@ public actor SyncDatabase {
         if try !columnExists(database, table: "items", column: "course_id") { try execute(database, "ALTER TABLE items ADD COLUMN course_id INTEGER") }
         if try !columnExists(database, table: "items", column: "module_id") { try execute(database, "ALTER TABLE items ADD COLUMN module_id INTEGER") }
         try execute(database, "UPDATE items SET course_id = NULL, module_id = NULL WHERE (course_id IS NULL) != (module_id IS NULL)")
+        // Where Moodle placed each file when it was last seen, so a later sync can tell a move made
+        // on Moodle from a change in Beepbar's own path rules. Existing rows start empty and are
+        // filled on their next sync without moving anything (see `RemoteMovePolicy`).
+        if try !columnExists(database, table: "items", column: "placement_section") { try execute(database, "ALTER TABLE items ADD COLUMN placement_section TEXT") }
+        if try !columnExists(database, table: "items", column: "placement_module") { try execute(database, "ALTER TABLE items ADD COLUMN placement_module TEXT") }
+        if try !columnExists(database, table: "items", column: "placement_single") { try execute(database, "ALTER TABLE items ADD COLUMN placement_single INTEGER") }
         try execute(database, "CREATE TABLE IF NOT EXISTS conflicts (id TEXT PRIMARY KEY, root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, remote_id TEXT NOT NULL, relative_path TEXT NOT NULL, incoming_path TEXT NOT NULL, base_sha256 TEXT, local_sha256 TEXT, remote_sha256 TEXT NOT NULL, remote_revision TEXT NOT NULL, detected_at REAL NOT NULL, status TEXT NOT NULL CHECK(status IN ('open', 'resolved')))")
         try execute(database, "CREATE TABLE IF NOT EXISTS pending_operations (id TEXT PRIMARY KEY, root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE, remote_id TEXT NOT NULL, destination_path TEXT NOT NULL, stage_path TEXT NOT NULL, expected_local_kind TEXT NOT NULL DEFAULT 'unknown' CHECK(expected_local_kind IN ('missing', 'present', 'unknown')), expected_local_sha256 TEXT, remote_sha256 TEXT NOT NULL DEFAULT '', remote_revision TEXT NOT NULL DEFAULT '', phase TEXT NOT NULL DEFAULT 'prepared' CHECK(phase IN ('prepared', 'committed')), course_id INTEGER, module_id INTEGER, UNIQUE(root_id, remote_id), UNIQUE(root_id, destination_path))")
         if try !columnExists(database, table: "pending_operations", column: "course_id") { try execute(database, "ALTER TABLE pending_operations ADD COLUMN course_id INTEGER") }
@@ -693,6 +754,7 @@ public actor SyncDatabase {
         try execute(database, "INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)")
         try execute(database, "INSERT OR IGNORE INTO schema_migrations(version) VALUES (3)")
         try execute(database, "INSERT OR IGNORE INTO schema_migrations(version) VALUES (4)")
+        try execute(database, "INSERT OR IGNORE INTO schema_migrations(version) VALUES (5)")
     }
 
     private static func execute(_ database: OpaquePointer?, _ sql: String) throws {

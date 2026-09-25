@@ -285,6 +285,7 @@ private struct SyncHeroCard: View {
         var parts: [Text] = []
         if summary.added > 0 { parts.append(figure(summary.added, tr("nuovo", "new"), tr("nuovi", "new"))) }
         if summary.updated > 0 { parts.append(figure(summary.updated, tr("aggiornato", "updated"), tr("aggiornati", "updated"))) }
+        if summary.moved > 0 { parts.append(figure(summary.moved, tr("spostato", "moved"), tr("spostati", "moved"))) }
         if summary.preservedLocal > 0 { parts.append(figure(summary.preservedLocal, tr("tua modifica protetta", "local change kept"), tr("tue modifiche protette", "local changes kept"))) }
         // `failures` also counts whole courses that failed; split them like `partialDetail` does.
         let failedCourses = summary.perCourse.filter { $0.courseFailure != nil }.count

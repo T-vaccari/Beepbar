@@ -596,6 +596,157 @@ import Testing
         #expect(fixture.upstream.downloadNetworkAccess == [RecordedNetworkAccess(expensive: true, constrained: true)])
     }
 
+    // MARK: Following moves made on Moodle
+
+    @Test func followsAModuleMovedToAnotherSectionWithoutDownloadingAgain() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        _ = try await fixture.synchronize(targets: [target])
+
+        fixture.upstream.setSection(course: 1, name: "Lab 1")
+        fixture.upstream.resetDownloadCount()
+        let moved = try await fixture.synchronize(targets: [target])
+
+        #expect(moved.moved == 100)
+        #expect(moved.added == 0 && moved.updated == 0 && moved.conflicts == 0)
+        #expect(fixture.upstream.downloadCount == 0)
+        let course = try #require(moved.perCourse.first { $0.courseID == 1 })
+        #expect(course.courseFolder == "Course 1")
+        #expect(course.movedItems.allSatisfy { $0.outcome == .moved && $0.folder == "Lab 1/Lezioni" })
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lab 1/Lezioni/0.txt").path))
+        // The old module folder is removed once empty.
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lezioni").path))
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: fixture.remoteID(course: 1, file: 0))?.relativePath.value == "Course 1/Lab 1/Lezioni/0.txt")
+
+        let again = try await fixture.synchronize(targets: [target])
+        #expect(again.moved == 0 && again.total == 0 && again.perCourse.isEmpty)
+    }
+
+    @Test func followsARenamedModule() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        _ = try await fixture.synchronize(targets: [target])
+
+        fixture.upstream.setModuleName(course: 1, name: "Lezioni 2026")
+        let result = try await fixture.synchronize(targets: [target])
+
+        #expect(result.moved == 100)
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lezioni 2026/7.txt").path))
+    }
+
+    @Test func aFileEditedLocallyStaysWhereTheUserLeftIt() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        _ = try await fixture.synchronize(targets: [target])
+        let edited = fixture.root.appending(path: "Course 1/Lezioni/0.txt")
+        try Data("my notes".utf8).write(to: edited)
+
+        fixture.upstream.setSection(course: 1, name: "Lab 1")
+        let result = try await fixture.synchronize(targets: [target])
+
+        #expect(result.moved == 99)
+        #expect(try Data(contentsOf: edited) == Data("my notes".utf8))
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lab 1/Lezioni/0.txt").path))
+        let kept = try #require(result.perCourse.first?.movedItems.first { $0.id == fixture.remoteID(course: 1, file: 0) })
+        #expect(kept.outcome == .keptEdited)
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: fixture.remoteID(course: 1, file: 0))?.relativePath.value == "Course 1/Lezioni/0.txt")
+
+        // Reported once, not on every later sync.
+        let again = try await fixture.synchronize(targets: [target])
+        #expect(again.perCourse.isEmpty)
+        #expect(try Data(contentsOf: edited) == Data("my notes".utf8))
+    }
+
+    @Test func aFileWhoseNewPlaceIsTakenIsNotMovedOntoIt() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        _ = try await fixture.synchronize(targets: [target])
+        let occupant = fixture.root.appending(path: "Course 1/Lab 1/Lezioni/0.txt")
+        try FileManager.default.createDirectory(at: occupant.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("someone else's file".utf8).write(to: occupant)
+
+        fixture.upstream.setSection(course: 1, name: "Lab 1")
+        let result = try await fixture.synchronize(targets: [target])
+
+        #expect(result.moved == 99)
+        #expect(try Data(contentsOf: occupant) == Data("someone else's file".utf8))
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lezioni/0.txt").path))
+        #expect(result.perCourse.first?.movedItems.first { $0.id == fixture.remoteID(course: 1, file: 0) }?.outcome == .keptOccupied)
+    }
+
+    @Test func filesTrackedByAnOlderVersionAreNotMovedRetroactively() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        // An older version tracked this file without recording where Moodle placed it, and Moodle
+        // has since put the module in another section.
+        let legacyPath = try RelativePath("Course 1/Lezioni/0.txt")
+        let localURL = fixture.root.appending(path: legacyPath.value)
+        try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: localURL)
+        let store = try FileStore(root: fixture.root)
+        guard case .present(let sha256) = try await store.inspect(legacyPath) else { Issue.record("missing local file"); return }
+        try await fixture.database.upsertBaseline(rootID: fixture.rootID, baseline: Baseline(remoteID: fixture.remoteID(course: 1, file: 0), relativePath: legacyPath, sha256: sha256, remoteRevision: String(repeating: "a", count: 40), courseID: 1, moduleID: 100))
+        fixture.upstream.setSection(course: 1, name: "Lab 1")
+
+        let first = try await fixture.synchronize(targets: [target])
+        let second = try await fixture.synchronize(targets: [target])
+
+        #expect(first.moved == 0 && second.moved == 0)
+        #expect(FileManager.default.fileExists(atPath: localURL.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lab 1/Lezioni/0.txt").path))
+        #expect(try await fixture.database.remotePlacements(rootID: fixture.rootID)[fixture.remoteID(course: 1, file: 0)] == RemotePlacement(sectionName: "Lab 1", moduleName: "Lezioni", isSingleFileResource: false))
+
+        // From then on, moves are followed.
+        fixture.upstream.setSection(course: 1, name: "Lab 2")
+        let third = try await fixture.synchronize(targets: [target])
+        #expect(third.moved == 100)
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lab 2/Lezioni/0.txt").path))
+    }
+
+    @Test func aMoveInterruptedAfterTheRenameIsCompletedWithoutDownloading() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        _ = try await fixture.synchronize(targets: [target])
+        // The file already reached its new place, but the crash came before the baseline followed.
+        let newURL = fixture.root.appending(path: "Course 1/Lab 1/Lezioni/0.txt")
+        try FileManager.default.createDirectory(at: newURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: fixture.root.appending(path: "Course 1/Lezioni/0.txt"), to: newURL)
+
+        fixture.upstream.setSection(course: 1, name: "Lab 1")
+        fixture.upstream.resetDownloadCount()
+        let result = try await fixture.synchronize(targets: [target])
+
+        #expect(fixture.upstream.downloadCount == 0)
+        #expect(result.conflicts == 0)
+        #expect(try await fixture.database.baseline(rootID: fixture.rootID, remoteID: fixture.remoteID(course: 1, file: 0))?.relativePath.value == "Course 1/Lab 1/Lezioni/0.txt")
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "Course 1/Lezioni/0.txt").path))
+    }
+
+    @Test func aFileWithAnOpenConflictWaitsUntilTheConflictIsResolved() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.remove() }
+        let target = fixture.targets[0]
+        _ = try await fixture.synchronize(targets: [target])
+        let path = fixture.root.appending(path: "Course 1/Lezioni/0.txt")
+        try Data("local edit".utf8).write(to: path)
+        fixture.upstream.setFile(course: 1, file: 0, value: "remote update", revision: "2")
+        let conflicted = try await fixture.synchronize(targets: [target])
+        #expect(conflicted.conflicts == 1)
+
+        fixture.upstream.setSection(course: 1, name: "Lab 1")
+        let result = try await fixture.synchronize(targets: [target])
+
+        #expect(result.moved == 99)
+        #expect(result.perCourse.first?.movedItems.contains { $0.id == fixture.remoteID(course: 1, file: 0) } == false)
+        #expect(try Data(contentsOf: path) == Data("local edit".utf8))
+    }
+
 private final class Fixture: @unchecked Sendable {
         let root: URL
         // The real app keeps the database in Application Support, outside the sync folder, so a
@@ -673,6 +824,8 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
     private var rejectedContents: [Int64: String] = [:]
     private var failedContents: [Int64: Int] = [:]
     private var networkAccess: Set<RecordedNetworkAccess> = []
+    private var sectionNames: [Int64: String] = [:]
+    private var moduleNames: [Int64: String] = [:]
     var downloadDelay: TimeInterval = 0
     var tokenIsValid = true
 
@@ -696,6 +849,9 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
             files[course]?[file] = File(value: Data(value.utf8), revision: revision, status: status)
         }
     }
+    /// Moves the course's only module to a section with this name, as a teacher dragging it on Moodle does.
+    func setSection(course: Int64, name: String) { lock.withLock { sectionNames[course] = name } }
+    func setModuleName(course: Int64, name: String) { lock.withLock { moduleNames[course] = name } }
     func rejectContents(course: Int64, errorCode: String = "requireloginerror") { lock.withLock { rejectedContents[course] = errorCode } }
     func failContents(course: Int64, status: Int) { lock.withLock { failedContents[course] = status } }
     func setStatus(course: Int64, file: Int, status: Int) { lock.withLock { guard var value = files[course]?[file] else { return }; value.status = status; files[course]?[file] = value } }
@@ -747,7 +903,7 @@ private final class MutableFixtureUpstream: @unchecked Sendable {
             let contentHash = String(repeating: file.revision == "1" ? "a" : "b", count: 40)
             return ["type": "file", "filename": file.filename ?? "\(index).txt", "filepath": "/", "filesize": file.value.count, "timemodified": 1, "contenthash": contentHash, "fileurl": "https://fixture.beepbar.test/webservice/pluginfile.php/\(course)/\(index).txt"]
         }
-        return try! JSONSerialization.data(withJSONObject: [["id": course, "name": "Materiali", "modules": [["id": course * 100, "name": "Lezioni", "modname": "folder", "contents": contents]]]])
+        return try! JSONSerialization.data(withJSONObject: [["id": course, "name": sectionNames[course] ?? "Materiali", "modules": [["id": course * 100, "name": moduleNames[course] ?? "Lezioni", "modname": "folder", "contents": contents]]]])
     }
 
     private func formValue(_ name: String, body: String) -> String? {
