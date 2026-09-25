@@ -63,12 +63,16 @@ Every choice in this section appears on the **Conflicts** page, under **Moved or
 |---|---|---|
 | Not edited | Moves it to the new folder without downloading it again. The old folder is removed if left empty | "Moved" in Activity |
 | Edited | Leaves it alone | Entry in Conflicts: **Move my version to the new folder** / **Leave it here** |
-| Another file already sits at the new place | Moves nothing, overwrites nothing | Entry in Conflicts: **Leave it here**. Moving becomes available again once the place is free |
 | Has an open conflict | Waits until the conflict is resolved, then applies the "not edited" or "edited" row | — |
 
 "Leave it here": BeepBar keeps tracking the file where you left it; later updates by the teacher arrive there.
 
 Renaming a section or a module counts as a move: every file in it follows the new name.
+
+If a file with the same name already sits at the new place, nothing is overwritten:
+
+- If that file is itself moving in the same sync (for example the teacher swapped the names of two sections), BeepBar moves the files in the right order; in a circular swap it uses a hidden temporary name. In the end every file is in its place with its own name.
+- If it is a different file (another material with the same name, or a file of yours), the download rule applies: the moved file arrives with a number, e.g. `text (1).pdf`. This also applies to "Move my version to the new folder".
 
 ### 4.2 The file is deleted and uploaded again elsewhere with the same contents
 

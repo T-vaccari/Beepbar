@@ -63,12 +63,16 @@ Tutte le scelte di questa sezione compaiono nella pagina **Conflitti**, nella se
 |---|---|---|
 | Non modificato | Lo sposta nella nuova cartella, senza riscaricarlo. La vecchia cartella, se resta vuota, viene rimossa | "Spostati" in Attività |
 | Modificato | Non lo tocca | Voce in Conflitti: **Sposta la mia versione nella nuova cartella** / **Lascia qui** |
-| Nella nuova posizione c'è già un altro file | Non sposta nulla, non sovrascrive | Voce in Conflitti: **Lascia qui**. Lo spostamento torna disponibile quando il posto si libera |
 | Con un conflitto aperto | Aspetta che il conflitto sia risolto, poi applica la riga "non modificato" o "modificato" | — |
 
 "Lascia qui": BeepBar continua a seguire il file dove l'hai lasciato; i futuri aggiornamenti del professore arrivano lì.
 
 Rinominare una sezione o un modulo conta come spostamento: tutti i file che contiene seguono il nuovo nome.
+
+Se nella nuova posizione c'è già un file con lo stesso nome, niente viene sovrascritto:
+
+- Se quel file si sta spostando anche lui nello stesso sync (per esempio il professore ha scambiato i nomi di due sezioni), BeepBar sposta i file nell'ordine giusto; in uno scambio circolare usa un nome temporaneo nascosto. Alla fine ogni file è al suo posto con il suo nome.
+- Se è un file diverso (un altro materiale con lo stesso nome, o un tuo file), vale la stessa regola dei download: il file spostato arriva con un numero, per esempio `testo (1).pdf`. Vale anche per "Sposta la mia versione nella nuova cartella".
 
 ### 4.2 Il file viene cancellato e ricaricato altrove con lo stesso contenuto
 
